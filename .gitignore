@@ -1,0 +1,5 @@
+node_modules/
+# Real ERP extracts, credentials and personal layouts stay on this machine.
+data/local/
+*.local.json
+.env

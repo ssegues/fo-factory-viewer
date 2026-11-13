@@ -1,0 +1,11 @@
+{
+  "note": "Local presentation layer. Never written back to the ERP and never overwritten by a new extraction.",
+  "byResource": {
+    "3114": "cnc", "3115": "cnc", "3116": "press",
+    "3117": "inspect", "3118": "press",
+    "1225": "robot", "1226": "robot",
+    "5133": "pack", "5134": "pack"
+  },
+  "byCapability": { "Milling": "cnc", "Pressing": "press", "Inspection": "inspect", "Assembly": "robot", "Packing": "pack" },
+  "fallback": "press"
+}

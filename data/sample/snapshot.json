@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "source": "sample",
+    "company": "USMF",
+    "site": "1",
+    "extractedAt": "2026-11-13T00:00:00Z",
+    "note": "Invented data in the shape of the D365FO manufacturing model."
+  },
+  "productionUnits": [
+    { "id": "PU-10", "name": "Machining" },
+    { "id": "PU-20", "name": "Assembly and packing" }
+  ],
+  "resourceGroups": [
+    { "id": "3110", "name": "Cutting", "productionUnitId": "PU-10" },
+    { "id": "3120", "name": "Finishing", "productionUnitId": "PU-10" },
+    { "id": "1210", "name": "Assembly", "productionUnitId": "PU-20" },
+    { "id": "5130", "name": "Packaging", "productionUnitId": "PU-20" }
+  ],
+  "resources": [
+    { "id": "3114", "name": "CNC mill A", "type": "Machine", "groupId": "3110", "efficiency": 70, "capabilities": ["Milling"], "calendarId": "Standard" },
+    { "id": "3115", "name": "CNC mill B", "type": "Machine", "groupId": "3110", "efficiency": 100, "capabilities": ["Milling"], "calendarId": "Standard" },
+    { "id": "3116", "name": "Hydraulic press", "type": "Machine", "groupId": "3110", "efficiency": 100, "capabilities": ["Pressing"], "calendarId": "Standard" },
+    { "id": "3117", "name": "Vision inspection", "type": "Machine", "groupId": "3120", "efficiency": 100, "capabilities": ["Inspection"], "calendarId": "Standard" },
+    { "id": "3118", "name": "Trim press", "type": "Machine", "groupId": "3120", "efficiency": 95, "capabilities": ["Pressing"], "calendarId": "Standard" },
+    { "id": "1225", "name": "Robot cell 1", "type": "Machine", "groupId": "1210", "efficiency": 100, "capabilities": ["Assembly"], "calendarId": "Standard" },
+    { "id": "1226", "name": "Robot cell 2", "type": "Machine", "groupId": "1210", "efficiency": 100, "capabilities": ["Assembly"], "calendarId": "Standard" },
+    { "id": "5133", "name": "Packing line 1", "type": "Machine", "groupId": "5130", "efficiency": 100, "capabilities": ["Packing"], "calendarId": "Standard" },
+    { "id": "5134", "name": "Packing line 2", "type": "Machine", "groupId": "5130", "efficiency": 100, "capabilities": ["Packing"], "calendarId": "Standard" },
+    { "id": "W-014", "name": "Assembly operator", "type": "HumanResource", "groupId": "1210", "calendarId": "Day shift" },
+    { "id": "W-022", "name": "Assembly operator", "type": "HumanResource", "groupId": "1210", "calendarId": "Day shift" },
+    { "id": "W-031", "name": "Quality inspector", "type": "HumanResource", "groupId": "3120", "calendarId": "Day shift" },
+    { "id": "W-040", "name": "Packer", "type": "HumanResource", "groupId": "5130", "calendarId": "Day shift" }
+  ],
+  "routes": [
+    {
+      "id": "000004", "name": "Speaker assembly", "productId": "D0002",
+      "operations": [
+        { "number": 10, "name": "Cut", "requirement": { "resourceId": "3114" }, "runTime": 3.5 },
+        { "number": 20, "name": "Assemble", "requirement": { "groupId": "1210" }, "secondary": ["W-014", "W-022"], "runTime": 6 },
+        { "number": 30, "name": "Pack", "requirement": { "resourceId": "5133" }, "secondary": ["W-040"], "runTime": 2.5 }
+      ]
+    },
+    {
+      "id": "000007", "name": "Machined bracket", "productId": "D0005",
+      "operations": [
+        { "number": 10, "name": "Mill", "requirement": { "resourceId": "3115" }, "runTime": 5 },
+        { "number": 20, "name": "Inspect", "requirement": { "resourceId": "3117" }, "secondary": ["W-031"], "runTime": 2 },
+        { "number": 30, "name": "Pack", "requirement": { "resourceId": "5134" }, "runTime": 2.5 }
+      ]
+    }
+  ],
+  "productionOrders": [
+    { "id": "P000101", "productId": "D0002", "routeId": "000004", "quantity": 200, "jobs": [
+      { "operation": 10, "resourceId": "3114", "start": 10, "end": 70 }, { "operation": 20, "resourceId": "1225", "start": 90, "end": 190 }, { "operation": 30, "resourceId": "5133", "start": 210, "end": 250 } ] },
+    { "id": "P000102", "productId": "D0002", "routeId": "000004", "quantity": 120, "jobs": [
+      { "operation": 10, "resourceId": "3114", "start": 70, "end": 130 }, { "operation": 20, "resourceId": "1226", "start": 150, "end": 250 }, { "operation": 30, "resourceId": "5133", "start": 270, "end": 310 } ] },
+    { "id": "P000103", "productId": "D0002", "routeId": "000004", "quantity": 80, "jobs": [
+      { "operation": 10, "resourceId": "3114", "start": 130, "end": 190 }, { "operation": 20, "resourceId": "1225", "start": 200, "end": 300 }, { "operation": 30, "resourceId": "5133", "start": 320, "end": 360 } ] },
+    { "id": "P000104", "productId": "D0005", "routeId": "000007", "quantity": 50, "jobs": [
+      { "operation": 10, "resourceId": "3115", "start": 20, "end": 120 }, { "operation": 20, "resourceId": "3117", "start": 140, "end": 200 }, { "operation": 30, "resourceId": "5134", "start": 220, "end": 280 } ] },
+    { "id": "P000105", "productId": "D0005", "routeId": "000007", "quantity": 50, "jobs": [
+      { "operation": 10, "resourceId": "3115", "start": 120, "end": 220 }, { "operation": 20, "resourceId": "3117", "start": 240, "end": 300 }, { "operation": 30, "resourceId": "5134", "start": 320, "end": 380 } ] },
+    { "id": "P000106", "productId": "D0002", "routeId": "000004", "quantity": 150, "jobs": [
+      { "operation": 10, "resourceId": "3114", "start": 200, "end": 260 }, { "operation": 20, "resourceId": "1226", "start": 270, "end": 370 }, { "operation": 30, "resourceId": "5133", "start": 390, "end": 430 } ] }
+  ],
+  "schedule": { "startLabel": "06:00", "minutes": 480 }
+}
