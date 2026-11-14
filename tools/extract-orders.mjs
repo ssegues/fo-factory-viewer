@@ -1,4 +1,4 @@
-// Reads production orders, their route operations and scheduled jobs for one site (GET only)
+// Reads production orders, their route operations, scheduled jobs and BOM lines for one site (GET only)
 // and merges them into an existing snapshot.
 //
 //   node tools/extract-orders.mjs <snapshot-folder> [--connection data/local/connection.local.json] [--company usmf] [--site 1]
@@ -32,6 +32,8 @@ const operations = await attempt('ProductionOrderRouteOperations', { filter: inC
 const jobs = await attempt('ProductionOrderRouteJobs', { filter: inCompany, select: [
   'JobId', 'ProductionOrderNumber', 'OperationNumber', 'OperationPriority', 'RouteJobType', 'OperationsResourceId', 'ScheduledFromDate', 'ScheduledFromTime', 'ScheduledEndDate', 'ScheduledEndTime',
   'ScheduledJobDurationHours', 'JobStatus', 'IsJobEnded', 'IsJobCancelled', 'JobProcessingPercentage' ] });
+const materials = await attempt('ProductionOrderBillOfMaterialLines', { filter: inCompany, select: [
+  'ProductionOrderNumber', 'LineNumber', 'ItemNumber', 'LineType', 'RouteOperationNumber', 'ConsumptionWarehouseId', 'ConsumptionWarehouseLocationId', 'IsResourceConsumptionUsed', 'EstimatedBOMLineQuantity', 'FlushingPrinciple' ] });
 console.log(report);
 if (!headers) { console.error('Production orders could not be read; the snapshot was left unchanged.'); process.exit(2); }
 
@@ -54,6 +56,11 @@ const productionOrders = headers.map((h) => ({
     scheduledStart: stamp(o.ScheduledFromDate, o.ScheduledFromTime), scheduledEnd: stamp(o.ScheduledEndDate, o.ScheduledEndTime),
     costingResourceId: o.CostingOperationResourceId || null, started: o.IsOperationStarted, completed: o.IsOperationCompleted,
   })).sort((a, b) => a.number - b.number),
+  // What the order consumes, at which operation, and from which warehouse and location (as the order's BOM lines state it).
+  materials: materials && by(materials, h.ProductionOrderNumber).sort((a, b) => a.LineNumber - b.LineNumber).map((m) => ({
+    itemNumber: m.ItemNumber, lineType: m.LineType, operationNumber: Number(m.RouteOperationNumber) || null, quantity: m.EstimatedBOMLineQuantity,
+    warehouseId: m.ConsumptionWarehouseId || null, locationId: m.ConsumptionWarehouseLocationId || null, resourceConsumption: m.IsResourceConsumptionUsed === 'Yes' || m.IsResourceConsumptionUsed === true,
+  })),
   jobs: by(jobs, h.ProductionOrderNumber).map((j) => ({
     id: j.JobId, operation: j.OperationNumber, priority: j.OperationPriority, type: j.RouteJobType, resourceId: j.OperationsResourceId || null,
     start: stamp(j.ScheduledFromDate, j.ScheduledFromTime), end: stamp(j.ScheduledEndDate, j.ScheduledEndTime), hours: j.ScheduledJobDurationHours,

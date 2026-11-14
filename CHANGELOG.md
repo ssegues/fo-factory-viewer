@@ -2,6 +2,15 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.6.0 — 2026-11-14
+
+- **Warehouse page (proof of concept)**, reached from a Factory / Warehouse switch in the header. Pick a warehouse and see it laid out from its ERP structure: rack rows by aisle, rack, shelf and bin, floor areas, and dock-side locations, coloured by zone. Locations are clickable.
+- Forklifts show put-away, replenishment, picking and production supply between real locations of the right type. These trips are illustrative, not real warehouse work, and the box fill is decorative.
+- `tools/import-warehouse.mjs` converts a warehouse Data management package into `warehouses.json`.
+- Factory floor: the warehouses that production works with are drawn as a strip of painted locations at the back of the hall, and routes start and end at the input and output locations the ERP names.
+- **Material flow** on the factory floor, in violet. Route view: components travel from the location the BOM line consumes from to the group's input bay and on to the resource. Orders view: a crate reaches each resource as its job starts, using the order's own BOM lines (warehouse, location, operation). A **Material** button hides or shows it.
+- The order read now includes production order BOM lines; the structure import includes each BOM line's consumption warehouse and resource-consumption flag.
+
 ## 0.5.0 — 2026-11-14
 
 - Three new models for the mapping panel: **3D printer**, **paint booth** and **floor location** (a marked bay on the floor, for a resource that is only a place).

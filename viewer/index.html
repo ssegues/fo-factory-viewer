@@ -18,6 +18,9 @@
   #top h1 { font-size:15px; font-weight:600; margin:0; letter-spacing:1.6px; text-transform:uppercase; }
   #version { font-size:10px; font-weight:400; color:var(--dim); letter-spacing:.8px; margin-left:4px; }
   #top small { color:var(--accent); display:block; font-size:11px; letter-spacing:1.4px; }
+  .nav { display:flex; } .nav a { color:var(--dim); text-decoration:none; border:1px solid rgba(140,170,190,.3); padding:10px 20px; font-size:14px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
+  .nav a.on { background:rgba(61,214,198,.2); color:var(--accent); border-color:var(--accent); box-shadow:0 0 16px rgba(61,214,198,.3) inset; }
+  .nav[hidden] { display:none; }
   .seg { display:flex; gap:6px; }
   .seg button { background:rgba(255,255,255,.03); color:var(--dim); border:1px solid rgba(140,170,190,.25); padding:7px 14px; font:inherit; font-size:12px; letter-spacing:1.4px; text-transform:uppercase; cursor:pointer; }
   .seg button.on { background:rgba(61,214,198,.18); color:var(--accent); border-color:var(--accent); box-shadow:0 0 14px rgba(61,214,198,.25) inset; }
@@ -27,6 +30,9 @@
   #refreshBtn small { display:block; color:var(--dim); font-size:10px; letter-spacing:.6px; text-transform:none; }
   #refreshBtn:disabled { cursor:progress; opacity:.7; }
   #refreshBtn.failed { color:var(--warm); border-color:rgba(255,162,61,.6); }
+  #matBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
+  #matBtn.on { color:#c9a2ff; border-color:#c9a2ff; }
+  .lbl.mat { color:#12091c; background:#c9a2ff; padding:1px 7px; font-weight:700; }
   #mapBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
   #mapBtn.on { color:var(--accent); border-color:var(--accent); }
   #mapPanel { top:136px; left:16px; width:400px; max-height:calc(100vh - 230px); padding:14px 16px; display:flex; flex-direction:column; gap:8px; font-size:12px; }
@@ -78,6 +84,7 @@
 
 <div id="top" class="hud">
   <div><h1>FactoryOps Lab <span id="version" class="mono"></span></h1><small class="mono" id="scope"></small></div>
+  <div class="nav" id="nav" hidden><a class="on">Factory</a><a id="navWh">Warehouse</a></div>
   <div class="seg" id="modes">
     <button data-mode="structure">Floor</button>
     <button data-mode="route" class="on">Route</button>
@@ -85,6 +92,7 @@
   </div>
   <select id="routeSel" class="mono" aria-label="Route"></select>
   <button id="emptyBtn" class="mono"></button>
+  <button id="matBtn" class="mono on">Material</button>
   <button id="mapBtn" class="mono">Models</button>
   <button id="refreshBtn" class="mono" hidden></button>
 </div>
@@ -115,6 +123,7 @@
   <span><i style="background:#3ddc84;color:#3ddc84"></i>RUNNING</span>
   <span><i style="background:#5b7a99;color:#5b7a99"></i>IDLE</span>
   <span><i style="background:#ffa23d;color:#ffa23d"></i>WIP</span>
+  <span><i style="background:#c9a2ff;color:#c9a2ff"></i>MATERIAL</span>
 </div>
 
 <script type="module">
@@ -136,7 +145,7 @@ const requested = new URLSearchParams(location.search).get('data') ?? 'sample';
 const SHOW_EMPTY = new URLSearchParams(location.search).get('empty') === '1';
 const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? requested : 'sample';
 async function loadJson(name) { const r = await fetch(`../data/${dataset}/${name}.json`); return r.ok ? r.json() : null; }
-const [SNAP, VISUALS] = await Promise.all([loadJson('snapshot'), loadJson('visuals')]);
+const [SNAP, VISUALS, WAREHOUSES] = await Promise.all([loadJson('snapshot'), loadJson('visuals'), loadJson('warehouses')]);
 if (!SNAP) { document.getElementById('loading').textContent = `No snapshot found in data/${dataset}`; throw new Error('Snapshot missing'); }
 
 const isPerson = (r) => r.type === 'Personnel';
@@ -172,9 +181,14 @@ const SITE = { units: SNAP.productionUnits.map((u) => ({ ...u,
     resources: stations.filter((r) => r.groupId === g.id).map((r) => ({ ...r, model: modelFor(r), worker: workerAt[r.id] })) })).filter((g) => g.resources.length || SHOW_EMPTY),
 })).filter((u) => u.groups.length) };
 const hiddenGroups = SNAP.resourceGroups.length - SITE.units.reduce((n, u) => n + u.groups.length, 0);
+// Material: BOM lines say what is consumed, at which operation, and from which warehouse or location.
+// A line with no operation number is consumed at the first operation, as in the ERP.
+const bomOf = {}; for (const b of SNAP.boms ?? []) if (!bomOf[b.productId] || b.siteSpecific) bomOf[b.productId] = b;
+const materialLines = (lines) => (lines ?? []).filter((l) => !l.lineType || l.lineType === 'Item')
+  .map((l) => ({ item: l.itemNumber, op: l.operationNumber ?? null, qty: l.quantity, warehouseId: l.warehouseId ?? null, locationId: l.locationId ?? null, resource: Boolean(l.resourceConsumption) }));
 const ROUTES = rawRoutes.map((r) => {
   const longest = Math.max(0, ...r.operations.map((o) => o.runHoursPerUnit ?? 0));
-  return { id: r.id, name: r.name, product: r.productId,
+  return { id: r.id, name: r.name, product: r.productId, materials: materialLines(bomOf[r.productId]?.lines),
     ops: r.operations.map((o) => ({ no: o.number, name: o.name, hours: o.runHoursPerUnit ?? 0,
       alternatives: (o.eligibleResourceIds ?? []).filter((id) => stationIds.has(id)),
       assistants: (o.secondary ?? []).map((s) => (s.eligibleResourceIds ?? []).filter((id) => byId[id])).filter((s) => s.length),
@@ -190,11 +204,13 @@ const clockOf = (x) => (DATED ? (Date.parse(x + 'Z') - T0) / 3.6e6 : x);        
 const TRAVEL = DATED ? 10 : 15, MIN_BUSY = DATED ? 8 : 0;
 const productColour = {};
 const ORDERS = rawOrders.map((o) => {
-  const jobs = (o.jobs ?? []).filter((j) => j.start != null && j.resourceId).map((j) => ({ primary: !j.priority || j.priority === 'Primary', row: [j.resourceId, clockOf(j.start), clockOf(j.end ?? j.start)] }));
+  const jobs = (o.jobs ?? []).filter((j) => j.start != null && j.resourceId).map((j) => ({ primary: !j.priority || j.priority === 'Primary', row: [j.resourceId, clockOf(j.start), clockOf(j.end ?? j.start), j.operation ?? null] }));
+  const materials = materialLines(o.materials ?? bomOf[o.productId]?.lines);
   productColour[o.productId] ??= PALETTE[Object.keys(productColour).length % PALETTE.length];
-  return { id: o.id, product: o.productId, colour: productColour[o.productId],
+  return { id: o.id, product: o.productId, colour: productColour[o.productId], materials, materialsFrom: o.materials ? 'Order BOM lines in the ERP' : 'BOM of the product',
     jobs: jobs.filter((j) => j.primary).map((j) => j.row).sort((x, y) => x[1] - y[1]), assists: jobs.filter((j) => !j.primary).map((j) => j.row),
-    rows: [['Product', o.productId ?? '—'], ['Status', o.status ?? '—'], ['Quantity', o.quantity ?? '—'], ['Route', o.routeId ?? '—'], ['Scheduled start', (o.scheduledStart ?? '—').replace('T', ' ')], ['Scheduled end', (o.scheduledEnd ?? '—').replace('T', ' ')], ['Delivery', o.deliveryDate ?? '—']] };
+    rows: [['Product', o.productId ?? '—'], ['Status', o.status ?? '—'], ['Quantity', o.quantity ?? '—'], ['Route', o.routeId ?? '—'], ['Scheduled start', (o.scheduledStart ?? '—').replace('T', ' ')], ['Scheduled end', (o.scheduledEnd ?? '—').replace('T', ' ')], ['Delivery', o.deliveryDate ?? '—'],
+      ['Materials', materials.length ? materials.slice(0, 4).map((m) => m.item).join(', ') + (materials.length > 4 ? ` +${materials.length - 4}` : '') + (o.materials ? '' : ' (from the BOM)') : '—']] };
 });
 const DAY = DATED ? Math.max(24, ...ORDERS.flatMap((o) => o.jobs.map((j) => j[2]))) + 24 : SNAP.schedule?.minutes ?? 480;
 const DAY_START = (() => { const [h, m] = (SNAP.schedule?.startLabel ?? '06:00').split(':').map(Number); return h * 60 + m; })();
@@ -205,6 +221,7 @@ function clockLabel(t) {
 document.getElementById('scope').textContent = `${SNAP.meta?.company ?? ''} // SITE ${SNAP.meta?.site ?? ''}`;
 document.getElementById('demo').textContent = SNAP.meta?.source === 'sample' ? 'Illustrative data · sample snapshot'
   : `D365FO snapshot · ${SNAP.meta?.company} site ${SNAP.meta?.site} · effective ${SNAP.meta?.effectiveDate ?? ''}` + '';
+if (WAREHOUSES) { document.getElementById('nav').hidden = false; document.getElementById('navWh').href = `warehouse.html?data=${dataset}`; }
 const emptyCount = SNAP.resourceGroups.filter((g) => !stations.some((r) => r.groupId === g.id)).length;
 const emptyBtn = document.getElementById('emptyBtn');
 if (emptyCount) { emptyBtn.textContent = SHOW_EMPTY ? `Hide ${emptyCount} empty groups` : `Show ${emptyCount} empty groups`;
@@ -826,7 +843,12 @@ for (const unit of SITE.units) {
 }
 const PAD = 10;
 const siteW = SITE.units.reduce((s, u) => s + u.w, 0) + (SITE.units.length - 1) * AISLE + PAD * 2 + 4;
-const siteD = Math.max(...SITE.units.map((u) => u.d)) + 6;
+// Warehouses that production works with: the ones named by a resource group's input or output location.
+const usedBy = {};
+for (const g of SNAP.resourceGroups) for (const [role, at] of [['Input of', g.input], ['Output of', g.output]]) if (at?.warehouseId) ((usedBy[at.warehouseId] ??= {})[at.locationId ?? ''] ??= []).push(`${role} ${g.id}`);
+const productionWarehouses = (WAREHOUSES?.warehouses ?? []).filter((w) => usedBy[w.id]);
+const STRIP = productionWarehouses.length ? 8.5 : 0, OZ = STRIP / 2;
+const siteD = Math.max(...SITE.units.map((u) => u.d)) + 6 + STRIP;
 world.add(slab(siteW, siteD, 0.24, 0.24, 0x8e98a4));
 border(world, siteW - 0.5, siteD - 0.5, 0, 0.245, 0);
 
@@ -834,9 +856,9 @@ const KIND = { Personnel: 'Manual workstation', Vendor: 'Subcontractor', Machine
 let cursorX = -siteW / 2 + PAD + 2;
 for (const unit of SITE.units) {
   const ux = cursorX + unit.w / 2; cursorX += unit.w + AISLE;
-  const us = slab(unit.w, unit.d, 0.06, 0.3, 0xa9b4c0); us.position.x = ux; world.add(us);
-  const ut = paintedText(`${unit.id}  ${unit.name}`, 1.25, '#e9eef3', 0.55); ut.position.set(ux - unit.w / 2 + 0.7, 0.31, -unit.d / 2 + 1.35); world.add(ut);
-  let shelfZ = -unit.d / 2 + 2.6;
+  const us = slab(unit.w, unit.d, 0.06, 0.3, 0xa9b4c0); us.position.x = ux; us.position.z = OZ; world.add(us);
+  const ut = paintedText(`${unit.id}  ${unit.name}`, 1.25, '#e9eef3', 0.55); ut.position.set(ux - unit.w / 2 + 0.7, 0.31, OZ - unit.d / 2 + 1.35); world.add(ut);
+  let shelfZ = OZ - unit.d / 2 + 2.6;
   for (const shelf of unit.shelves) {
     for (const group of shelf.groups) {
       const gx = ux - unit.w / 2 + 1.5 + group.offset + group.w / 2, gz = shelfZ + group.d / 2;
@@ -848,6 +870,7 @@ for (const unit of SITE.units) {
       [['IN', group.input, gx - group.w / 2 + 2.0], ['OUT', group.output, gx + group.w / 2 - (group.resources.length ? 3.4 : 2.0)]].forEach(([kind, place, x]) => {
         if (!place) return;
         const bay = floorBay(kind, place); bay.position.set(x, LEVEL + 0.012, gz - group.d / 2 + 1.25); world.add(bay);
+        (groupsById[group.id].bays ??= {})[kind] = new THREE.Vector3(x, LEVEL, gz - group.d / 2 + 1.25);
         bay.userData.info = { kind: kind === 'IN' ? 'Input location' : 'Output location', small: true, title: `${place.warehouseId ?? '—'} / ${place.locationId ?? '—'}`, rows: [
           ['Resource group', `${group.id} ${group.name}`], ['Warehouse', place.warehouseId ?? '—'], ['Location', place.locationId ?? '—'],
           ['Role', kind === 'IN' ? 'Components are delivered here' : 'Output leaves from here'], ['Source', 'Resource group setup in the ERP'] ] };
@@ -951,11 +974,33 @@ function makePad(x, text) {
   const l = label(text, 'pad'); l.position.set(x, 4.2, 0); props.add(l);
   return new THREE.Vector3(x, LEVEL, 0);
 }
+// Production warehouse strip: every location of those warehouses as a painted bay, grouped by warehouse.
+const whBays = {};
+{
+  let x = -siteW / 2 + 13; const z = -siteD / 2 + 1.2 + STRIP / 2 - 0.6;
+  for (const w of productionWarehouses) {
+    const width = w.locations.length * 3.4 + 1.2;
+    const zone = slab(width, STRIP - 2.2, 0.05, 0.05, 0x55626f, 4); zone.position.set(x + width / 2, zone.position.y, z); props.add(zone); border(props, width, STRIP - 2.2, x + width / 2, 0.055, z);
+    const title = paintedText(`Warehouse ${w.id}`, 0.7, '#7ff0e3', 0.85); title.position.set(x + 0.5, 0.06, z + STRIP / 2 - 1.75); props.add(title);
+    w.locations.forEach((l, i) => {
+      const bx = x + 0.6 + 1.7 + i * 3.4, uses = usedBy[w.id][l.id] ?? [];
+      const tex = canvasTexture(384, 224, (g) => { const colour = uses.length ? '#9be564' : '#8a97a5';
+        g.clearRect(0, 0, 384, 224); g.globalAlpha = 0.14; g.fillStyle = colour; g.fillRect(8, 8, 368, 208); g.globalAlpha = 1; g.strokeStyle = colour; g.lineWidth = 9; g.strokeRect(8, 8, 368, 208);
+        g.fillStyle = colour; g.font = '800 78px Consolas,monospace'; g.textBaseline = 'middle'; g.fillText(l.id.slice(0, 7), 24, 150); g.font = '600 34px "Segoe UI",sans-serif'; g.fillText('LOCATION', 26, 52); }, false);
+      const bay = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 1.7), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })); bay.rotation.x = -Math.PI / 2; bay.position.set(bx, 0.07, z + 0.9); props.add(bay);
+      pallet(props, bx - 0.75, z - 1.6, 1 + (i % 2)); pallet(props, bx + 0.8, z - 1.7, 2 - (i % 2));
+      bay.userData.info = { kind: 'Warehouse location', small: true, title: `${w.id} / ${l.id}`, rows: [['Warehouse', w.id], ['Location', l.id], ['Zone', l.zoneId ?? '—'], ['Profile', l.profileId ?? '—'],
+        ['Used by', uses.join(', ') || 'no resource group'], ['Source', 'Warehouse setup in the ERP']] };
+      pickables.push(bay); whBays[`${w.id}/${l.id}`] = new THREE.Vector3(bx, LEVEL, z + 2.6);
+    });
+    x += width + 1.6;
+  }
+}
 const RAW = makePad(-siteW / 2 + 5.5, 'Raw material');
 const FIN = makePad(siteW / 2 - 5.5, 'Finished goods');
 for (const [dx, dz, n] of [[-1.6, -3.4, 2], [0.4, -3.6, 3], [-1.5, -1.2, 1], [-1.4, 3.0, 2], [0.5, 3.6, 1]]) pallet(props, RAW.x + dx, dz, n);
 for (const [dx, dz, n] of [[1.5, -3.5, 2], [-0.4, -3.4, 2], [1.6, -1.3, 3], [1.5, 3.2, 1], [-0.3, 3.6, 2]]) pallet(props, FIN.x + dx, dz, n);
-rack(props, RAW.x + 0.5, -siteD / 2 + 2.2); rack(props, RAW.x + 6.5, -siteD / 2 + 2.2); rack(props, FIN.x - 2, -siteD / 2 + 2.2);
+if (!STRIP) { rack(props, RAW.x + 0.5, -siteD / 2 + 2.2); rack(props, RAW.x + 6.5, -siteD / 2 + 2.2); rack(props, FIN.x - 2, -siteD / 2 + 2.2); }
 forklift(props, FIN.x - 1.5, siteD / 2 - 4, -2.4); forklift(props, RAW.x + 1.5, siteD / 2 - 5.5, 0.5);
 for (const [x, z, m] of [[-3, 0, M.blue], [-2, 0.3, M.blue], [-2.5, 1.1, M.orange], [-1.2, 1.2, M.teal]]) barrel(props, siteW / 2 + x - 9, -siteD / 2 + 1.6 + z, m);
 for (const [x, z, m] of [[0, 0, M.orange], [1, 0.2, M.blue], [0.5, 1, M.blue]]) barrel(props, -siteW / 2 + 2 + x, siteD / 2 - 2.6 + z, m);
@@ -1058,11 +1103,65 @@ const START = { key: 'raw', pos: RAW.clone().add(new THREE.Vector3(3.6, 0, 1)) }
 let ROUTE = null, layers = [], curveCache = new Map();
 function curveFor(a, b) { const k = a.key + '>' + b.key; if (!curveCache.has(k)) curveCache.set(k, curve(a.pos, b.pos)); return curveCache.get(k); }
 const centre = (stops) => stops.reduce((v, s) => v.add(s.pos), new THREE.Vector3()).multiplyScalar(1 / stops.length);
+// ---- material flow: components travel from where the BOM line says they are consumed from to the resource.
+// Source of a line: its own warehouse and location; with resource consumption, the input location of the
+// resource's group. A warehouse with a single location stands for that location. Where the group has an input
+// bay, material is delivered there first.
+let showMaterial = true;
+const MATERIAL = 0xc9a2ff;
+const chevronPlain = canvasTexture(128, 64, (g) => { g.clearRect(0, 0, 128, 64); g.strokeStyle = '#fff'; g.lineWidth = 8; g.lineCap = 'square'; for (const x of [22, 86]) { g.beginPath(); g.moveTo(x, 14); g.lineTo(x + 20, 32); g.lineTo(x, 50); g.stroke(); } });
+const matLaneMat = new THREE.MeshBasicMaterial({ map: chevronPlain, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(MATERIAL).multiplyScalar(1.7), toneMapped: false });
+const crateGeo = new RoundedBoxGeometry(0.62, 0.5, 0.62, 2, 0.05), crateMat = std(0x3a2a55, 0.5, 0.2, { emissive: MATERIAL, emissiveIntensity: 0.9 }), bandMat = glow(MATERIAL, 3.5);
+function materialCrate() {
+  const g = new THREE.Group(); const body = new THREE.Mesh(crateGeo, crateMat); body.position.y = 0.42; body.castShadow = true; g.add(body);
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.08, 0.66), bandMat); band.position.y = 0.42; g.add(band);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), M.graphite); base.position.y = 0.1; g.add(base); return g;
+}
+function sourceOf(line, machineId) {
+  const group = groupsById[machines[machineId]?.res.groupId]?.group;
+  let wh = line.warehouseId, loc = line.locationId;
+  if (line.resource && group?.input) { wh = group.input.warehouseId; loc = group.input.locationId; }
+  if (wh && !loc) { const w = WAREHOUSES?.warehouses.find((x) => x.id === wh); if (w?.locations.length === 1) loc = w.locations[0].id; }
+  const key = `${wh}/${loc}`;
+  if (whBays[key]) return { key, pos: whBays[key], text: key };
+  const any = wh && Object.keys(whBays).find((k) => k.startsWith(wh + '/'));
+  if (any) return { key: 'wh:' + wh, pos: whBays[any], text: `warehouse ${wh}` };
+  return { key: 'raw', pos: START.pos, text: wh ? `${wh}${loc ? ' / ' + loc : ''} (not on this floor)` : 'no warehouse stated' };
+}
+let matFlows = [];
+function buildMaterial(route) {
+  matFlows = [];
+  const legs = new Map(), tags = new Map();
+  const leg = (a, b) => { const k = a.key + '>' + b.key; if (!legs.has(k) && a.pos.distanceTo(b.pos) > 0.6) legs.set(k, curve(a.pos, b.pos)); };
+  for (const m of route.materials) {
+    const op = route.ops.find((o) => o.no === m.op) ?? (m.op == null ? route.ops[0] : null); if (!op) continue;
+    for (const id of op.alternatives.slice(0, 3)) {
+      const src = sourceOf(m, id), gid = machines[id].res.groupId, bay = groupsById[gid]?.bays?.IN, dest = { key: id, pos: front(id).add(new THREE.Vector3(-1.5, 0, 0.9)) };
+      if (bay) { const mid = { key: 'in:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(src, mid); leg(mid, dest); } else leg(src, dest);
+      const t = tags.get(src.key) ?? { src, items: new Set() }; t.items.add(m.item); tags.set(src.key, t);
+    }
+  }
+  for (const c of legs.values()) {
+    const lane = new THREE.Mesh(ribbon(c, 0.55), matLaneMat); lane.position.y = LEVEL + 0.02; lane.userData.material = true; lane.visible = showMaterial; routeStatic.add(lane);
+    const n = Math.max(1, Math.round(c.getLength() / 16));
+    for (let i = 0; i < n; i++) { const crate = materialCrate(); crate.userData.material = true; crate.visible = showMaterial; routeStatic.add(crate); matFlows.push({ crate, curve: c, phase: i / n, length: c.getLength() }); }
+  }
+  for (const { src, items } of tags.values()) {
+    const list = [...items], t = label(`MATERIAL · ${list.slice(0, 3).join(' · ')}${list.length > 3 ? ` +${list.length - 3}` : ''}`, 'mat');
+    t.position.copy(src.pos).add(new THREE.Vector3(0, 2.6, 0)); t.userData.material = true; t.visible = showMaterial; routeStatic.add(t);
+  }
+}
+let matClock = 0;
+function stepMaterial(dt) {
+  matClock += dt; matLaneMat.map.offset.x -= dt * 1.3;
+  for (const f of matFlows) { const u = ((matClock * 4.5) / f.length + f.phase) % 1; f.crate.position.copy(f.curve.getPointAt(u)); f.crate.position.y = LEVEL; }
+}
 function buildRoute(route) {
   for (const child of [...routeStatic.children]) { child.element?.remove(); child.geometry?.dispose(); routeStatic.remove(child); }
   ROUTE = route; curveCache = new Map(); clearRoute(); layers = [];
   if (!route) return;
-  const sequence = [[START], ...route.ops.map((op) => op.alternatives.map((id) => ({ key: id, pos: front(id), machine: id, op }))), [END]];
+  const end = (op, side) => { const at = groupsById[machines[op.alternatives[0]]?.res.groupId]?.group[side], key = at && `${at.warehouseId}/${at.locationId}`; return whBays[key] ? { key: 'wh:' + key, pos: whBays[key] } : null; };
+  const sequence = [[end(route.ops[0], 'input') ?? START], ...route.ops.map((op) => op.alternatives.map((id) => ({ key: id, pos: front(id), machine: id, op }))), [end(route.ops[route.ops.length - 1], 'output') ?? END]];
   layers.push(sequence[0]);
   for (let i = 1; i < sequence.length; i++) {
     const prev = sequence[i - 1], next = sequence[i];
@@ -1076,6 +1175,7 @@ function buildRoute(route) {
     const t = label(text, cls); t.position.copy(machines[id].pos).add(new THREE.Vector3(0, machines[id].height + 1.7, 0)); routeStatic.add(t); };
   for (const op of route.ops) for (const id of op.alternatives) tag(id, `OP ${op.no}`, 'op');
   for (const op of route.ops) for (const set of op.assistants) for (const id of set) tag(id, `OP ${op.no} +`, 'op assist');
+  buildMaterial(route);
 }
 // A route with many candidate resources would draw a lane for every pair. Those lanes appear only while a cart uses them.
 let lanes = new Map(), routeClock = 0;
@@ -1153,6 +1253,19 @@ ORDERS.forEach((o, n) => {
   const slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
   const stops = [RAW.clone().add(slot), ...o.jobs.map((j) => front(j[0])), FIN.clone().add(new THREE.Vector3(-slot.x, 0, slot.z))];
   o.curves = stops.slice(0, -1).map((s, i) => curve(s, stops[i + 1]));
+  // Material for each job: a crate leaves the consumption location and reaches the resource as the job starts.
+  o.supplies = [];
+  o.jobs.forEach((job, k) => {
+    const bySource = {};
+    for (const m of o.materials) { if (!(m.op === job[3] || (m.op == null && k === 0))) continue; const src = sourceOf(m, job[0]); (bySource[src.key] ??= { src, items: [] }).items.push(m); }
+    Object.values(bySource).forEach(({ src, items }, i) => {
+      const mesh = materialCrate(); mesh.visible = false; ordersLayer.add(mesh);
+      mesh.userData.info = { kind: 'Material', small: true, title: `${items.length} component${items.length === 1 ? '' : 's'} for ${o.id}`, rows: [['From', src.text], ['To', `${job[0]} ${machines[job[0]].res.name}`],
+        ...items.slice(0, 6).map((m) => [m.item, m.qty == null ? '—' : String(m.qty)]), ['Source', o.materialsFrom]] };
+      pickables.push(mesh);
+      o.supplies.push({ mesh, at: job[1], curve: curve(src.pos, front(job[0]).add(new THREE.Vector3(-1.4 + i * 0.9, 0, 0.9))) });
+    });
+  });
 });
 function placeOrders(t) {
   for (const id in machines) machines[id].active = 0;
@@ -1162,6 +1275,7 @@ function placeOrders(t) {
     if (!jobs.length) continue;
     const busyUntil = (j) => Math.max(j[2], j[1] + MIN_BUSY), first = jobs[0][1], done = busyUntil(jobs[last]);
     o.mesh.visible = t >= first - TRAVEL && t <= done + TRAVEL;
+    for (const s of o.supplies) { const u = (t - (s.at - TRAVEL)) / TRAVEL; s.mesh.visible = showMaterial && o.mesh.visible && u >= 0 && u <= 1.25; if (s.mesh.visible) s.mesh.position.copy(s.curve.getPoint(ease(Math.min(1, u)))); }
     if (!o.mesh.visible) continue;
     let pos;
     if (t < first) pos = o.curves[0].getPoint(ease((t - (first - TRAVEL)) / TRAVEL));
@@ -1182,7 +1296,7 @@ function placeOrders(t) {
 // ---------------------------------------------------------------- modes and interface
 const hints = {
   structure: 'The floor is generated from the ERP hierarchy: production units contain resource groups, groups contain resources.',
-  orders: ORDERS.length ? ORDERS.filter((o) => o.jobs.length).length + ' production orders replayed against their scheduled jobs. Markers are coloured by product. Drag the timeline or let it play.' : 'This snapshot has no production orders yet.',
+  orders: ORDERS.length ? ORDERS.filter((o) => o.jobs.length).length + ' production orders replayed against their scheduled jobs. Markers are coloured by product; violet crates are their components arriving from the consumption location. Drag the timeline or let it play.' : 'This snapshot has no production orders yet.',
 };
 let mode = 'route', minutes = 0, playing = true;
 const routeSel = document.getElementById('routeSel');
@@ -1201,6 +1315,7 @@ function setMode(next) {
   clearRoute(); for (const id in machines) machines[id].active = 0;
 }
 document.querySelectorAll('#modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+document.getElementById('matBtn').addEventListener('click', (e) => { showMaterial = !showMaterial; e.currentTarget.classList.toggle('on', showMaterial); for (const c of routeStatic.children) if (c.userData.material) c.visible = showMaterial; });
 playBtn.addEventListener('click', () => { playing = !playing; playBtn.textContent = playing ? 'Pause' : 'Play'; });
 scrub.addEventListener('input', () => { minutes = Number(scrub.value); });
 
@@ -1306,7 +1421,7 @@ document.getElementById('loading').remove();
 const timer = new THREE.Clock(); let elapsed = 0;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(timer.getDelta(), 0.05); elapsed += dt;
-  if (mode === 'route') stepRoute(dt);
+  if (mode === 'route') { stepRoute(dt); stepMaterial(dt); }
   if (mode === 'orders') {
     if (playing) { minutes = (minutes + dt * (DAY / (DATED ? 180 : 48))) % DAY; scrub.value = String(minutes); }
     placeOrders(minutes);

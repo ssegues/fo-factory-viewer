@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FactoryOps Lab — warehouse</title>
+<style>
+  :root { --bg:#070b10; --panel:rgba(10,16,23,.86); --line:rgba(61,214,198,.35); --text:#dfe7ee; --dim:#8497a8; --accent:#3dd6c6; --warm:#ffa23d; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui,sans-serif; }
+  #stage, #labels { position:fixed; inset:0; } #labels { pointer-events:none; }
+  .mono { font-family:Consolas,"Cascadia Mono",ui-monospace,monospace; }
+  .hud { position:fixed; background:var(--panel); border:1px solid var(--line); backdrop-filter:blur(8px);
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px)); }
+  .hud::before { content:""; position:absolute; left:0; top:0; width:42px; height:2px; background:var(--accent); }
+  #top { top:16px; left:16px; padding:12px 16px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; max-width:calc(100vw - 370px); }
+  #top h1 { font-size:15px; font-weight:600; margin:0; letter-spacing:1.6px; text-transform:uppercase; }
+  #top small { color:var(--accent); display:block; font-size:11px; letter-spacing:1.4px; }
+  #version { font-size:10px; font-weight:400; color:var(--dim); letter-spacing:.8px; margin-left:4px; }
+  .nav { display:flex; } .nav a { color:var(--dim); text-decoration:none; border:1px solid rgba(140,170,190,.3); padding:10px 20px; font-size:14px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
+  .nav a.on { background:rgba(61,214,198,.2); color:var(--accent); border-color:var(--accent); box-shadow:0 0 16px rgba(61,214,198,.3) inset; }
+  .seg { display:flex; gap:6px; }
+  .seg button { background:rgba(255,255,255,.03); color:var(--dim); border:1px solid rgba(140,170,190,.25); padding:7px 12px; font:inherit; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; cursor:pointer; }
+  .seg button.on { background:rgba(61,214,198,.18); color:var(--accent); border-color:var(--accent); box-shadow:0 0 14px rgba(61,214,198,.25) inset; }
+  #whSel { background:#0b1118; color:var(--accent); border:1px solid var(--line); padding:7px 8px; font-size:12px; }
+  #hint { bottom:62px; left:16px; padding:9px 14px; color:var(--dim); font-size:13px; max-width:560px; }
+  #detail { top:16px; right:16px; width:290px; padding:14px 16px 16px; }
+  #detail .k { color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:1.6px; }
+  #detail h2 { margin:2px 0 10px; font-size:18px; font-weight:600; }
+  #detail dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:13px; }
+  #detail dt { color:var(--dim); } #detail dd { margin:0; text-align:right; }
+  #legend { bottom:18px; left:16px; padding:8px 14px; font-size:12px; color:var(--dim); display:flex; gap:14px; flex-wrap:wrap; max-width:70vw; }
+  #legend i { display:inline-block; width:8px; height:8px; margin-right:6px; }
+  .lbl { white-space:nowrap; font-family:Consolas,"Cascadia Mono",ui-monospace,monospace; font-size:11px; letter-spacing:.6px; background:rgba(7,11,16,.82); border:1px solid var(--line); border-left:3px solid var(--accent); padding:1px 7px; color:var(--text); }
+  .lbl.area { border-left-color:var(--warm); color:var(--warm); text-transform:uppercase; }
+  #demo { position:fixed; top:16px; left:50%; transform:translateX(-50%); font-size:11px; color:var(--dim); letter-spacing:1.4px; text-transform:uppercase; }
+  #loading { position:fixed; inset:0; display:grid; place-items:center; background:var(--bg); color:var(--accent); letter-spacing:3px; text-transform:uppercase; font-size:13px; z-index:5; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div id="labels"></div>
+<div id="loading" class="mono">Stacking shelves…</div>
+
+<div id="top" class="hud">
+  <div><h1>FactoryOps Lab <span id="version" class="mono"></span></h1><small class="mono" id="scope"></small></div>
+  <div class="nav"><a id="navFactory" href="./">Factory</a><a class="on">Warehouse</a></div>
+  <select id="whSel" class="mono" aria-label="Warehouse"></select>
+  <div class="seg" id="flows"></div>
+</div>
+<div id="hint" class="hud"></div>
+<div id="demo" class="mono">Proof of concept · structure from the ERP, movement illustrative</div>
+<div id="detail" class="hud">
+  <div class="k mono" id="d-kind">Selection</div>
+  <h2 id="d-title">Click a location</h2>
+  <dl id="d-body"><dt>Tip</dt><dd>Drag to orbit, scroll to zoom</dd></dl>
+</div>
+<div id="legend" class="hud mono"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ---------------------------------------------------------------- data
+// Structure comes from warehouses.json (locations, zones, profiles as set up in the ERP).
+// Forklift movement is illustrative: warehouse work is not read yet, so trips are drawn between real
+// locations of the right types, not replayed from real work. Box fill is decorative: stock is not read.
+const params = new URLSearchParams(location.search);
+const requested = params.get('data') ?? 'sample';
+const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? requested : 'sample';
+document.getElementById('navFactory').href = `./?data=${dataset}`;
+fetch('../package.json').then((r) => r.ok ? r.json() : null).catch(() => null).then((pkg) => { if (pkg?.version) document.getElementById('version').textContent = 'v' + pkg.version; });
+const DATA = await fetch(`../data/${dataset}/warehouses.json`).then((r) => r.ok ? r.json() : null).catch(() => null);
+if (!DATA) { document.getElementById('loading').textContent = `No warehouses.json in data/${dataset}`; throw new Error('Warehouse data missing'); }
+const whSel = document.getElementById('whSel');
+for (const w of [...DATA.warehouses].sort((a, b) => b.locations.length - a.locations.length)) whSel.add(new Option(`${w.id} · ${w.locations.length} location${w.locations.length === 1 ? '' : 's'}`, w.id));
+const WH = DATA.warehouses.find((w) => w.id === params.get('wh')) ?? DATA.warehouses.find((w) => w.id === whSel.options[0].value);
+whSel.value = WH.id;
+whSel.addEventListener('change', () => { const u = new URL(location.href); u.searchParams.set('wh', whSel.value); location.href = u.toString(); });
+document.getElementById('scope').textContent = `WAREHOUSE ${WH.id} // ${WH.locations.length} LOCATIONS`;
+
+// Areas: locations grouped by location type (from the profile). Dock-side types sit on the apron; the rest is storage.
+const DOCK = new Set(['BAYDOOR', 'RECV', 'STAGE', 'PACK', 'QMS', 'Return', 'SORT']);
+const PICKING = new Set(['ORDER', 'FLOOR', 'WEBSHOP', 'FLOWRACK']);
+const physical = WH.locations.filter((l) => l.type !== 'USER' && !(WH.advanced && !l.type && !l.aisle));
+const skipped = WH.locations.length - physical.length;
+const areaOf = (l) => l.type ?? (l.aisle ? 'Racked' : 'Locations');
+const areas = {};
+for (const l of physical) { const key = areaOf(l) + (l.aisle ? '' : '|flat'); (areas[key] ??= { type: areaOf(l), racked: Boolean(l.aisle), locations: [] }).locations.push(l); }
+const blocks = Object.values(areas).filter((a) => !DOCK.has(a.type)).sort((a, b) => b.locations.length - a.locations.length);
+const docks = Object.values(areas).filter((a) => DOCK.has(a.type)).flatMap((a) => a.locations).sort((a, b) => a.type.localeCompare(b.type));
+const ZONE_COLOURS = [0x4cc9f0, 0xffd166, 0x9b5de5, 0x06d6a0, 0xff7b54, 0xf72585, 0x90be6d];
+const zoneColour = {}; const colourOf = (l) => (zoneColour[l.zoneId ?? l.type ?? '—'] ??= ZONE_COLOURS[Object.keys(zoneColour).length % ZONE_COLOURS.length]);
+
+// ---------------------------------------------------------------- renderer
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1; stage.appendChild(renderer.domElement);
+const labelRenderer = new CSS2DRenderer({ element: document.getElementById('labels') });
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x070b10); scene.fog = new THREE.Fog(0x070b10, 130, 330);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.4;
+const camera = new THREE.PerspectiveCamera(27, 1, 1, 900);
+const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = 0.08; controls.maxPolarAngle = 1.3; controls.minDistance = 16;
+scene.add(new THREE.HemisphereLight(0x8fb8ff, 0x0a0f15, 0.7));
+const sun = new THREE.DirectionalLight(0xffe9cf, 2.2); sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.04; scene.add(sun);
+const rim = new THREE.DirectionalLight(0x3dd6c6, 0.6); rim.position.set(-40, 20, -30); scene.add(rim);
+const composer = new EffectComposer(renderer); composer.addPass(new RenderPass(scene, camera)); composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.6, 1.7)); composer.addPass(new OutputPass());
+
+// ---------------------------------------------------------------- textures, materials, helpers
+function canvasTexture(w, h, draw, repeat = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const hash = (text) => { let h = 2166136261; for (const ch of text) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return (h >>> 0) / 4294967296; };
+const concrete = canvasTexture(512, 512, (g, w, h) => {
+  g.fillStyle = '#39414b'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 9000; i++) { g.fillStyle = rnd() > 0.5 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.07)'; const s = 1 + rnd() * 3; g.fillRect(rnd() * w, rnd() * h, s, s); }
+  g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 3; for (const p of [0, 256]) { g.beginPath(); g.moveTo(p, 0); g.lineTo(p, h); g.moveTo(0, p); g.lineTo(w, p); g.stroke(); }
+});
+const hazard = canvasTexture(64, 64, (g) => { g.fillStyle = '#f2b705'; g.fillRect(0, 0, 64, 64); g.fillStyle = '#15181c'; for (let i = -64; i < 128; i += 32) { g.beginPath(); g.moveTo(i, 64); g.lineTo(i + 16, 64); g.lineTo(i + 80, 0); g.lineTo(i + 64, 0); g.fill(); } });
+const chevron = canvasTexture(128, 64, (g) => { g.clearRect(0, 0, 128, 64); g.strokeStyle = '#3dd6c6'; g.lineWidth = 9; g.lineCap = 'square'; for (const x of [20, 84]) { g.beginPath(); g.moveTo(x, 10); g.lineTo(x + 24, 32); g.lineTo(x, 54); g.stroke(); } });
+function floorTag(text, colour, w = 384, h = 224) {
+  return canvasTexture(w, h, (g) => {
+    g.clearRect(0, 0, w, h); g.globalAlpha = 0.13; g.fillStyle = colour; g.fillRect(8, 8, w - 16, h - 16); g.globalAlpha = 1;
+    g.strokeStyle = colour; g.lineWidth = 8; g.setLineDash([24, 12]); g.strokeRect(8, 8, w - 16, h - 16);
+    g.fillStyle = colour; g.font = `700 ${text.length > 9 ? 44 : 60}px Consolas,monospace`; g.textBaseline = 'middle'; g.fillText(text.slice(0, 14), 24, h - 46);
+  }, false);
+}
+function paintedText(text, height, colour = '#dfe7ee', opacity = 0.6) {
+  const tex = canvasTexture(1024, 128, (g) => { g.font = '700 84px "Segoe UI",sans-serif'; g.textBaseline = 'middle'; g.fillStyle = colour; g.fillText(text.toUpperCase(), 8, 68); }, false);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(height * 8, height), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.geometry.translate(height * 4, 0, 0); return m;
+}
+const std = (color, roughness = 0.6, metalness = 0.2, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
+const M = { steel: std(0xaeb7c2, 0.38, 0.75), graphite: std(0x2a3038, 0.55, 0.45), dark: std(0x1b2028, 0.6, 0.5), orange: std(0xff8a2a, 0.45, 0.25), yellow: std(0xf2b705, 0.55, 0.1),
+  carton: std(0xb98a56, 0.9, 0), blue: std(0x2f6fde, 0.6, 0.1), rubber: std(0x101216, 0.9, 0), white: std(0xe6e2d9, 0.5, 0.15), wood: std(0x9a7448, 0.8, 0), teal: std(0x1f8f86, 0.5, 0.3) };
+const glow = (hex, intensity = 3) => std(0x111111, 0.4, 0, { emissive: hex, emissiveIntensity: intensity });
+function box(w, h, d, mat, x = 0, y = 0, z = 0, r = 0.05) {
+  const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2.01, h / 2.01, d / 2.01)), mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m;
+}
+function cyl(rt, rb, h, mat, x = 0, y = 0, z = 0, seg = 16) { const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat); m.position.set(x, y, z); m.castShadow = true; return m; }
+function label(text, cls = '') { const el = document.createElement('div'); el.className = 'lbl ' + cls; el.textContent = text; return new CSS2DObject(el); }
+function flat(w, d, map, x, z, y = 0.075) { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false })); m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); return m; }
+function palletLoad(g, x, z, n, y = 0) { g.add(box(1.3, 0.14, 1.3, M.wood, x, y + 0.07, z, 0.02)); for (let k = 0; k < n; k++) g.add(box(1.1, 0.7, 1.1, M.carton, x, y + 0.5 + k * 0.72, z, 0.04)); }
+
+// ---------------------------------------------------------------- layout from the structure
+// Racked areas: one rack row per aisle, bays along the row by rack number, shelves upward, bins side by side.
+// Flat areas: a grid of floor bays. Dock-side locations line the apron on the left. No coordinate comes from the data.
+const hall = new THREE.Group(); scene.add(hall);
+const ROW = 4.6, BAY = 1.7, LEVEL_H = 1.15, DEPTH = 1.25, CROSS = 4.5, CELL_X = 2.9, CELL_Z = 2.6;
+const place = {};                               // location id -> { pos, access, location }
+const pickables = [], slots = [];
+let cursor = 13, minZ = -8;
+const blockInfo = [];
+for (const block of blocks) {
+  const x0 = cursor;
+  if (block.racked) {
+    const aisles = [...new Set(block.locations.map((l) => l.aisle))].sort();
+    const racks = Math.max(...block.locations.map((l) => l.rack)), levels = Math.max(...block.locations.map((l) => l.shelf)), bins = Math.max(...block.locations.map((l) => l.bin));
+    aisles.forEach((aisle, i) => {
+      const x = x0 + i * ROW + DEPTH / 2;
+      for (const l of block.locations.filter((q) => q.aisle === aisle)) {
+        const z = -(l.rack - 0.5) * BAY + (l.bin - (bins + 1) / 2) * (BAY / bins);
+        place[l.id] = { location: l, pos: new THREE.Vector3(x, 0.22 + (l.shelf - 1) * LEVEL_H, z), access: new THREE.Vector3(x + DEPTH / 2 + 1.55, 0, -(l.rack - 0.5) * BAY), size: [DEPTH * 0.82, (BAY / bins) * 0.84] };
+      }
+      const len = racks * BAY;
+      for (let r = 0; r <= racks; r++) for (const dx of [-DEPTH / 2, DEPTH / 2]) hall.add(box(0.08, levels * LEVEL_H + 0.3, 0.08, M.orange, x + dx, (levels * LEVEL_H + 0.3) / 2, -r * BAY, 0.01));
+      for (let s = 0; s < levels; s++) for (const dx of [-DEPTH / 2, DEPTH / 2]) hall.add(box(0.07, 0.1, len, M.blue, x + dx, 0.14 + s * LEVEL_H, -len / 2, 0.01));
+      const tag = label(`AISLE ${aisle}`); tag.position.set(x, levels * LEVEL_H + 1.0, 0.4); hall.add(tag);
+    });
+    cursor = x0 + aisles.length * ROW; minZ = Math.min(minZ, -racks * BAY - 3);
+    blockInfo.push({ block, x0, x1: cursor - (ROW - DEPTH - 0.4), text: `${block.type} · ${aisles.length} aisles × ${racks} racks × ${levels} shelves` });
+  } else {
+    const n = block.locations.length, cols = Math.min(8, Math.ceil(Math.sqrt(n * 1.4)));
+    block.locations.sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })).forEach((l, i) => {
+      const x = x0 + (i % cols) * CELL_X + CELL_X / 2, z = -Math.floor(i / cols) * (CELL_Z + 1.4) - CELL_Z / 2 - 0.6;
+      place[l.id] = { location: l, pos: new THREE.Vector3(x, 0.03, z), access: new THREE.Vector3(x, 0, z + CELL_Z / 2 + 0.9), floor: true, size: [CELL_X - 0.5, CELL_Z - 0.4] };
+      hall.add(flat(CELL_X - 0.4, CELL_Z - 0.3, floorTag(l.id, '#' + colourOf(l).toString(16).padStart(6, '0')), x, z));
+    });
+    cursor = x0 + cols * CELL_X; minZ = Math.min(minZ, -Math.ceil(n / cols) * (CELL_Z + 1.4) - 3);
+    blockInfo.push({ block, x0, x1: cursor, text: `${block.type} · ${n} floor location${n === 1 ? '' : 's'}` });
+  }
+  cursor += 4;
+}
+docks.forEach((l, i) => {
+  const z = -i * 5.6 - 2.6; minZ = Math.min(minZ, z - 5);
+  place[l.id] = { location: l, pos: new THREE.Vector3(5, 0.03, z), access: new THREE.Vector3(9.6, 0, z), floor: true, dock: true, size: [6.6, 4.4] };
+  hall.add(flat(7, 4.8, floorTag(l.id, l.type === 'BAYDOOR' ? '#ffa23d' : '#7ff0e3', 448, 300), 5, z));
+});
+const W = Math.max(cursor, 30), zc = CROSS, maxZ = CROSS + 5.5, D = maxZ - minZ;
+hall.position.set(-W / 2, 0, -(minZ + maxZ) / 2);
+
+// Floor, cross aisle, walls.
+{
+  const map = concrete.clone(); map.needsUpdate = true; map.repeat.set(W / 8, D / 8);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 0.24, D), std(0x8e98a4, 0.92, 0.05, { map })); slab.position.set(W / 2, -0.12, (minZ + maxZ) / 2); slab.receiveShadow = true; hall.add(slab);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), std(0x1a2028, 0.95, 0)); ground.rotation.x = -Math.PI / 2; ground.position.y = -0.24; ground.receiveShadow = true; scene.add(ground);
+  const stripe = (len, x, z, rot = 0) => { const m = hazard.clone(); m.needsUpdate = true; m.repeat.set(len / 0.64, 1); const s = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.3), std(0xffffff, 0.75, 0, { map: m })); s.rotation.x = -Math.PI / 2; s.rotation.z = rot; s.position.set(x, 0.012, z); hall.add(s); };
+  stripe(W - 10, W / 2 + 4, zc - 2.3); stripe(W - 10, W / 2 + 4, zc + 2.3); stripe(D - 2, 10.2, (minZ + maxZ) / 2, Math.PI / 2);
+  const title = paintedText(`Warehouse ${WH.id}`, 1.5, '#e9eef3', 0.5); title.position.set(12, 0.02, maxZ - 1.6); hall.add(title);
+  for (const b of blockInfo) { const t = paintedText(b.text, 0.75, '#7ff0e3', 0.8); t.position.set(b.x0, 0.02, 1.1); hall.add(t); }
+  const wallMat = std(0x27303a, 0.8, 0.3);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 9, 0.6), wallMat); back.position.set(W / 2, 4.5, minZ - 0.3); back.receiveShadow = true; hall.add(back);
+  const side = new THREE.Mesh(new THREE.BoxGeometry(0.6, 9, D), wallMat); side.position.set(-2.3, 4.5, (minZ + maxZ) / 2); side.receiveShadow = true; hall.add(side);
+  for (let x = 4; x < W; x += 9) { const s = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.14, 0.08), glow(x % 18 < 9 ? 0x3dd6c6 : 0xffc98a, 2.4)); s.position.set(x, 6.4, minZ + 0.05); hall.add(s); hall.add(box(0.8, 9.4, 0.8, M.graphite, x - 4.5, 4.7, minZ + 0.1, 0.05)); }
+  for (const l of docks.filter((d) => d.type === 'BAYDOOR')) {         // a dock door with a trailer backed up to it
+    const z = place[l.id].pos.z;
+    hall.add(box(0.2, 4.6, 4.4, M.dark, -1.95, 2.3, z, 0.02)); hall.add(box(0.3, 0.3, 4.8, M.yellow, -1.9, 4.75, z, 0.03));
+    for (let k = 0; k < 5; k++) hall.add(box(0.06, 0.06, 4.3, M.steel, -1.82, 0.5 + k * 0.9, z, 0.01));
+    hall.add(box(9, 3.4, 3.2, M.white, -7.6, 2.5, z, 0.08)); hall.add(box(9.04, 0.3, 3.24, M.teal, -7.6, 1.0, z, 0.02));
+    for (const dx of [-10.5, -9.2]) for (const dz of [-1.5, 1.5]) { const w = cyl(0.5, 0.5, 0.3, M.rubber, dx, 0.3, z + dz, 16); w.rotation.x = Math.PI / 2; hall.add(w); }
+  }
+}
+
+// Location slots (pickable plates) and decorative box fill, both instanced.
+{
+  const entries = Object.values(place);
+  const plate = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.05, 1), new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.3 }), entries.length);
+  const filled = entries.filter((e) => !e.dock && hash(e.location.id + WH.id) < 0.68);
+  const boxes = new THREE.InstancedMesh(new RoundedBoxGeometry(1, 1, 1, 2, 0.04), new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 }), filled.length);
+  const m4 = new THREE.Matrix4(), c = new THREE.Color();
+  entries.forEach((e, i) => {
+    m4.makeScale(e.size[0], 1, e.size[1]).setPosition(e.pos.x, e.pos.y, e.pos.z); plate.setMatrixAt(i, m4);
+    plate.setColorAt(i, c.setHex(colourOf(e.location)).multiplyScalar(e.floor ? 0.25 : 0.55)); slots.push(e);
+  });
+  filled.forEach((e, i) => {
+    const h = e.floor ? 0.9 + hash(e.location.id) * 1.3 : 0.55 + hash(e.location.id) * 0.4;
+    m4.makeScale(e.size[0] * (e.floor ? 0.55 : 0.92), h, e.size[1] * (e.floor ? 0.6 : 0.9)).setPosition(e.pos.x, e.pos.y + 0.03 + h / 2, e.pos.z); boxes.setMatrixAt(i, m4);
+    boxes.setColorAt(i, c.setHex(0xb98a56).lerp(new THREE.Color(colourOf(e.location)), 0.22).multiplyScalar(0.8 + hash(e.location.id + 'c') * 0.3));
+  });
+  plate.receiveShadow = true; boxes.castShadow = true; boxes.receiveShadow = true; boxes.raycast = () => {};
+  hall.add(plate, boxes); pickables.push(plate);
+}
+// Pendant lamps and fit.
+for (let x = 10; x < W; x += 18) for (const z of [minZ * 0.6, minZ * 0.2]) {
+  const lamp = new THREE.Group(); lamp.position.set(x, 9.6, z); lamp.add(cyl(0.22, 0.95, 0.5, M.graphite));
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.8, 24), glow(0xffe2b8, 3.2)); disc.rotation.x = Math.PI / 2; disc.position.y = -0.26; lamp.add(disc);
+  lamp.traverse((o) => { o.castShadow = false; }); hall.add(lamp);
+}
+const reach = Math.max(W * 1.25, D * 1.9, 46);
+camera.position.copy(new THREE.Vector3(0.5, 0.52, 0.72).normalize().multiplyScalar(reach)); camera.far = reach * 6; camera.updateProjectionMatrix();
+controls.maxDistance = reach * 1.8; controls.target.set(0, 1.5, 0); scene.fog.near = reach * 1.3; scene.fog.far = reach * 3.6;
+const half = Math.max(W, D) / 2 + 14; Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: half * 5 });
+sun.position.set(half * 0.55, half * 1.1, half * 0.7); sun.shadow.camera.updateProjectionMatrix();
+
+// ---------------------------------------------------------------- flows: forklifts between locations
+const ofType = (test) => Object.values(place).filter((e) => test(e.location));
+const storage = ofType((l) => !DOCK.has(l.type)), bulk = ofType((l) => l.type === 'BULK'), picking = ofType((l) => PICKING.has(l.type));
+const recv = ofType((l) => l.type === 'RECV' || l.defaultFor.includes('receipt')), outbound = ofType((l) => l.type === 'STAGE' || l.type === 'BAYDOOR'), production = ofType((l) => l.type === 'PRODUCTION');
+const FLOWS = [
+  { id: 'putaway', name: 'Put-away', from: recv, to: bulk.length ? bulk : storage, text: 'Put-away: received goods travel from the receiving location to storage.' },
+  { id: 'replenish', name: 'Replenishment', from: bulk, to: picking, text: 'Replenishment: pick locations are topped up from bulk storage.' },
+  { id: 'pick', name: 'Picking', from: picking.length ? picking : storage, to: outbound, text: 'Picking: goods leave their location for staging and the dock door.' },
+  { id: 'production', name: 'Production supply', from: bulk.length ? bulk : storage, to: production, text: 'Production supply: components move from storage to the production input locations.' },
+].filter((f) => f.from.length && f.to.length && f.from !== f.to);
+function makeForklift() {
+  const f = new THREE.Group();
+  f.add(box(1.9, 0.8, 1.15, M.orange, 0, 0.7, 0, 0.12)); f.add(box(0.6, 0.9, 1.15, M.graphite, -0.85, 0.85, 0, 0.1));
+  for (const [px, pz] of [[-0.55, -0.5], [-0.55, 0.5], [0.75, -0.5], [0.75, 0.5]]) f.add(box(0.08, 1.3, 0.08, M.dark, px, 1.7, pz, 0.02));
+  f.add(box(1.5, 0.08, 1.15, M.dark, 0.1, 2.38, 0, 0.03)); f.add(box(0.36, 0.5, 0.4, M.blue, -0.1, 1.35, 0, 0.08));
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), std(0xe8b796, 0.8, 0)); head.position.set(-0.1, 1.78, 0); f.add(head);
+  const hat = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.yellow); hat.position.set(-0.1, 1.82, 0); f.add(hat);
+  for (const pz of [-0.4, 0.4]) f.add(box(0.12, 4.6, 0.14, M.steel, 1.1, 2.4, pz, 0.02));
+  for (const [px, pz] of [[-0.6, -0.6], [-0.6, 0.6], [0.7, -0.6], [0.7, 0.6]]) { const w = cyl(0.3, 0.3, 0.22, M.rubber, px, 0.3, pz, 16); w.rotation.x = Math.PI / 2; f.add(w); }
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), glow(0xffa23d, 4)); beacon.position.set(0, 2.5, 0); f.add(beacon);
+  for (const pz of [-0.42, 0.42]) { const h = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.2), glow(0xfff1d6, 5)); h.position.set(0.97, 0.75, pz); f.add(h); }
+  const fork = new THREE.Group(); fork.position.y = 0.2; f.add(fork);
+  fork.add(box(0.1, 0.5, 1.0, M.dark, 1.2, 0.25, 0, 0.02)); for (const pz of [-0.3, 0.3]) fork.add(box(1.3, 0.06, 0.14, M.steel, 1.85, 0.03, pz, 0.01));
+  const load = new THREE.Group(); palletLoad(load, 1.85, 0, 1, 0.06); fork.add(load);
+  f.userData = { fork, load, beacon }; return f;
+}
+const flowLayer = new THREE.Group(); hall.add(flowLayer);
+const laneMat = new THREE.MeshBasicMaterial({ map: chevron, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(1.6, 1.6, 1.6), toneMapped: false });
+function pathBetween(a, b) {
+  const pts = [a.clone()]; const push = (x, z) => { const p = new THREE.Vector3(x, 0, z); if (p.distanceTo(pts[pts.length - 1]) > 0.05) pts.push(p); };
+  if (Math.abs(a.x - b.x) > 0.5 || Math.abs(a.z - b.z) > 0.5) { push(a.x, zc); push(b.x, zc); } push(b.x, b.z);
+  const lengths = pts.slice(1).map((p, i) => p.distanceTo(pts[i])); return { pts, lengths, total: lengths.reduce((s, x) => s + x, 0) };
+}
+function along(path, d) {
+  let i = 0; while (i < path.lengths.length - 1 && d > path.lengths[i]) d -= path.lengths[i++];
+  const a = path.pts[i], b = path.pts[i + 1] ?? a, t = path.lengths[i] ? Math.min(1, d / path.lengths[i]) : 1;
+  return { pos: a.clone().lerp(b, t), heading: Math.atan2(-(b.z - a.z), b.x - a.x) };
+}
+function ribbon(path) {
+  const pos = [], uv = [], idx = []; let run = 0, n = 0;
+  path.pts.slice(1).forEach((b, i) => {
+    const a = path.pts[i], dir = b.clone().sub(a).normalize(), side = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(0.42), len = path.lengths[i];
+    pos.push(a.x + side.x, 0.03, a.z + side.z, a.x - side.x, 0.03, a.z - side.z, b.x + side.x, 0.03, b.z + side.z, b.x - side.x, 0.03, b.z - side.z);
+    uv.push(run / 1.8, 0, run / 1.8, 1, (run + len) / 1.8, 0, (run + len) / 1.8, 1); idx.push(n, n + 1, n + 2, n + 1, n + 3, n + 2); n += 4; run += len;
+  });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx);
+  return new THREE.Mesh(g, laneMat);
+}
+const marker = (hex) => { const m = new THREE.Mesh(new THREE.RingGeometry(0.75, 0.95, 4, 1), new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(2.2), side: THREE.DoubleSide })); m.rotation.x = -Math.PI / 2; m.rotation.z = Math.PI / 4; return m; };
+let flow = null; const trucks = [];
+function newTrip(t, first) {
+  const pick = (list) => list[Math.floor(Math.random() * list.length)];
+  const from = pick(flow.from), to = pick(flow.to); if (t.lane) { flowLayer.remove(t.lane); t.lane.geometry.dispose(); }
+  t.from = from; t.to = to; t.approach = first ? null : pathBetween(t.mesh.position.clone().setY(0), from.access); t.trip = pathBetween(from.access, to.access);
+  t.lane = ribbon(t.trip); flowLayer.add(t.lane); t.phase = first ? 'lift' : 'approach'; t.d = 0; t.t = 0;
+  if (first) t.mesh.position.copy(from.access);
+  t.src.position.copy(from.access).setY(0.05); t.dst.position.copy(to.access).setY(0.05);
+}
+function setFlow(id) {
+  flow = FLOWS.find((f) => f.id === id) ?? null;
+  for (const t of trucks) { flowLayer.remove(t.mesh, t.src, t.dst); if (t.lane) flowLayer.remove(t.lane); } trucks.length = 0;
+  document.querySelectorAll('#flows button').forEach((b) => b.classList.toggle('on', b.dataset.flow === (flow?.id ?? 'structure')));
+  document.getElementById('hint').textContent = flow ? flow.text + ' Trips are illustrative: they join real locations of the right type, but are not real warehouse work.'
+    : `Laid out from the ERP structure: ${physical.length} locations by type, aisle, rack and shelf.` + (skipped ? ` ${skipped} non-physical location${skipped === 1 ? '' : 's'} (user, dummy) left out.` : '') + ' Box fill is decorative: stock by location is not read.';
+  if (!flow) return;
+  const n = Math.min(4, Math.max(2, Math.round(physical.length / 150)));
+  for (let i = 0; i < n; i++) { const t = { mesh: makeForklift(), src: marker(0x4cc9f0), dst: marker(0xffa23d) }; flowLayer.add(t.mesh, t.src, t.dst); trucks.push(t); newTrip(t, true); t.t = -i * 1.3; }
+}
+function stepFlow(dt) {
+  laneMat.map.offset.x -= dt * 1.1;
+  for (const t of trucks) {
+    const { fork, load, beacon } = t.mesh.userData; beacon.material.emissiveIntensity = Math.sin(performance.now() / 140) > 0 ? 5 : 0.8;
+    const drive = (path, loaded, next) => {
+      t.d += dt * 6.5; const p = along(path, Math.min(t.d, path.total)); t.mesh.position.copy(p.pos);
+      let turn = p.heading - t.mesh.rotation.y; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); t.mesh.rotation.y += turn * Math.min(1, dt * 7);
+      load.visible = loaded; fork.position.y += (0.5 - fork.position.y) * Math.min(1, dt * 4);
+      if (t.d >= path.total) { t.phase = next; t.t = 0; }
+    };
+    if (t.phase === 'approach') drive(t.approach, false, 'lift');
+    else if (t.phase === 'travel') drive(t.trip, true, 'drop');
+    else {                                       // lift at the source, drop at the target: face the location and raise the fork to its shelf
+      t.t += dt; if (t.t < 0) continue;
+      const end = t.phase === 'lift' ? t.from : t.to, height = 0.2 + end.pos.y, u = Math.min(1, t.t / 1.6);
+      const face = Math.atan2(-(end.pos.z - end.access.z), end.pos.x - end.access.x); let turn = face - t.mesh.rotation.y; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); t.mesh.rotation.y += turn * Math.min(1, dt * 6);
+      fork.position.y = 0.2 + Math.sin(u * Math.PI) * (height - 0.2) + (u > 0.5 ? 0 : 0); load.visible = t.phase === 'lift' ? u > 0.5 : u < 0.5;
+      if (u >= 1) { if (t.phase === 'lift') { t.phase = 'travel'; t.d = 0; } else newTrip(t, false); }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- interface
+const flowBox = document.getElementById('flows');
+for (const [id, name] of [['structure', 'Structure'], ...FLOWS.map((f) => [f.id, f.name])]) { const b = document.createElement('button'); b.dataset.flow = id; b.textContent = name; b.addEventListener('click', () => setFlow(id)); flowBox.append(b); }
+const legend = document.getElementById('legend');
+for (const [name, hex] of Object.entries(zoneColour)) { const s = document.createElement('span'), i = document.createElement('i'); i.style.background = '#' + hex.toString(16).padStart(6, '0'); s.append(i, `${name}`); legend.append(s); }
+const ring = marker(0x3dd6c6); ring.scale.setScalar(1.3); ring.visible = false; hall.add(ring);
+const ray = new THREE.Raycaster(), pointer = new THREE.Vector2(); let down = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(pointer, camera);
+  const hit = ray.intersectObjects(pickables, false)[0]; if (!hit || hit.instanceId == null) { ring.visible = false; return; }
+  const e2 = slots[hit.instanceId], l = e2.location;
+  document.getElementById('d-kind').textContent = 'Warehouse location'; document.getElementById('d-title').textContent = `${WH.id} / ${l.id}`;
+  const rows = [['Location type', l.type ?? '—'], ['Zone', l.zoneId ? `${l.zoneId}${DATA.zones[l.zoneId]?.name && DATA.zones[l.zoneId].name !== l.zoneId ? ' · ' + DATA.zones[l.zoneId].name : ''}` : '—'], ['Profile', l.profileId ?? '—'],
+    ['Aisle / rack / shelf / bin', l.aisle ? `${l.aisle} / ${l.rack} / ${l.shelf} / ${l.bin}` : '—'], ['Position read from', l.positionFrom === 'location-id' ? 'the location ID' : l.positionFrom ? 'location fields' : '—'],
+    ['Default for', l.defaultFor.join(', ') || '—'], ['Fixed items', l.fixedItems.join(', ') || '—']];
+  const body = document.getElementById('d-body'); body.replaceChildren();
+  for (const [k, v] of rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
+  ring.position.set(e2.pos.x, e2.pos.y + 0.06, e2.pos.z); ring.visible = true;
+});
+function resize() { const w = innerWidth, h = innerHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); composer.setSize(w, h); labelRenderer.setSize(w, h); }
+addEventListener('resize', resize); resize(); setFlow(params.get('flow') ?? 'structure');
+document.getElementById('loading').remove();
+const timer = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(timer.getDelta(), 0.05);
+  if (flow) stepFlow(dt);
+  ring.rotation.z += dt * 0.5; controls.update(); composer.render(); labelRenderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

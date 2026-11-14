@@ -333,6 +333,82 @@
       ]
     }
   ],
+  "boms": [
+    {
+      "id": "B0002",
+      "productId": "D0002",
+      "siteSpecific": true,
+      "lines": [
+        {
+          "itemNumber": "M0001",
+          "quantity": 1,
+          "per": 1,
+          "unit": "ea",
+          "operationNumber": 10,
+          "lineType": "Item",
+          "warehouseId": "11",
+          "resourceConsumption": false
+        },
+        {
+          "itemNumber": "M0002",
+          "quantity": 2,
+          "per": 1,
+          "unit": "ea",
+          "operationNumber": 20,
+          "lineType": "Item",
+          "warehouseId": "11",
+          "resourceConsumption": false
+        },
+        {
+          "itemNumber": "M0003",
+          "quantity": 4,
+          "per": 1,
+          "unit": "ea",
+          "operationNumber": 20,
+          "lineType": "Item",
+          "warehouseId": "11",
+          "resourceConsumption": false
+        },
+        {
+          "itemNumber": "P0001",
+          "quantity": 1,
+          "per": 1,
+          "unit": "ea",
+          "operationNumber": 30,
+          "lineType": "Item",
+          "warehouseId": "11",
+          "resourceConsumption": false
+        }
+      ]
+    },
+    {
+      "id": "B0005",
+      "productId": "D0005",
+      "siteSpecific": true,
+      "lines": [
+        {
+          "itemNumber": "M0007",
+          "quantity": 1,
+          "per": 1,
+          "unit": "ea",
+          "operationNumber": 10,
+          "lineType": "Item",
+          "warehouseId": "11",
+          "resourceConsumption": false
+        },
+        {
+          "itemNumber": "P0001",
+          "quantity": 1,
+          "per": 1,
+          "unit": "ea",
+          "operationNumber": 30,
+          "lineType": "Item",
+          "warehouseId": "11",
+          "resourceConsumption": false
+        }
+      ]
+    }
+  ],
   "productionOrders": [
     {
       "id": "P000101",

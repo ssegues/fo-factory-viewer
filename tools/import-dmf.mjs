@@ -124,6 +124,7 @@ for (const version of P['Bill of materials versions V4']) {
   if (!products.has(item) || !yes(version.ISACTIVE) || (version.PRODUCTIONSITEID && version.PRODUCTIONSITEID !== site)) continue;
   boms.push({ id: version.BOMID, productId: item, siteSpecific: Boolean(version.PRODUCTIONSITEID), lines: P['Bill of materials lines V3'].filter((l) => l.BOMID === version.BOMID).map((l) => ({
     itemNumber: l.ITEMNUMBER, quantity: number(l.QUANTITY), per: number(l.QUANTITYDENOMINATOR) || 1, unit: l.PRODUCTUNITSYMBOL, operationNumber: Number(l.ROUTEOPERATIONNUMBER) || null, lineType: l.LINETYPE,
+    warehouseId: l.CONSUMPTIONWAREHOUSEID || null, resourceConsumption: yes(l.ISRESOURCECONSUMPTIONUSED),
   })) });
 }
 
