@@ -22,6 +22,10 @@ When the viewer shows a real extract (`?data=local/<folder>`) and `data/local/co
 
 The structure (units, groups, resources, routes, BOMs) comes from a Data management package and is refreshed with `node tools/import-dmf.mjs`.
 
+## Resource models
+
+The ERP does not say what a resource looks like. **Models** in the header opens a panel that maps resources to models with rules; the most specific wins: resource, then resource group, resource type, capability, and a default. Changes show at once. For a real extract they are saved to `data/local/<folder>/visuals.json`; for the sample they last until the page is reloaded. This mapping is local and is never written to the ERP.
+
 ## Views
 
 - **Floor** — the shop floor generated from the hierarchy: site → production unit → resource group → resource.
@@ -38,7 +42,7 @@ Workers are shown only as secondary resources, standing next to the machine they
 | `data/sample/snapshot.json` | Invented data in the snapshot format |
 | `data/sample/visuals.json` | Local mapping from resources to 3D models |
 | `data/local/` | Real extracts; ignored by git |
-| `tools/serve.mjs` | Local server: static files and the order refresh |
+| `tools/serve.mjs` | Local server: static files, the order refresh and saving the model mapping |
 | `tools/import-dmf.mjs` | Builds a snapshot from a Data management package |
 | `tools/extract-orders.mjs`, `tools/fo-client.mjs` | GET-only OData read of orders and jobs |
 

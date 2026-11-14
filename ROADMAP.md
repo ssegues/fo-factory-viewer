@@ -2,17 +2,13 @@
 
 What each coming version is meant to include. Scope can move between versions; what has shipped is in `CHANGELOG.md`.
 
-## 0.4 — Resource mapping
-
-- A configuration panel in the viewer that maps each ERP resource to the model shown for it.
-- Rules by resource, resource group, capability and resource type, with a visible precedence.
-- Saved as a local layer next to the snapshot; never written to the ERP.
-
 ## 0.5 — Warehouse and material flow
 
 - Warehouses and locations on the floor, including each resource group's input and output location.
 - Components travel from their pick location to the input location of the consuming operation; finished goods leave from the output location.
 - Driven by warehouse work where the ERP has it, and derived from BOM lines and locations where it does not, with the two clearly told apart.
+- Known so far (USMF site 1): production order BOM lines are readable (887 lines, 44 items, consumed from warehouses 11 and 13); 17 of 22 resource groups have an input location and 12 an output location. Warehouses, zones, aisles, locations and warehouse work returned HTTP 403 for the integration user, so their volume is still unknown.
+- Open question: whether the warehouse is part of the same floor or a separate scene, to be decided once the location count is known.
 
 ## 0.6 — Manual layout
 

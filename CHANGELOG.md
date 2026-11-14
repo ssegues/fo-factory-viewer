@@ -2,6 +2,12 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.4.0 — 2026-11-14
+
+- **Models** panel in the viewer: map ERP resources to the model shown for them, with rules by resource, resource group, resource type and capability, and a default. The most specific rule wins and each resource shows which rule decided.
+- Changes apply to the scene at once and are saved to the snapshot's `visuals.json` through the local server. Nothing is written to the ERP.
+- Suggestions from the resource name are offered for machines, never applied automatically.
+
 ## 0.3.0 — 2026-11-14
 
 - **Refresh orders** button: the local server re-reads production orders, route operations and scheduled jobs (GET only) and reloads the Orders view.

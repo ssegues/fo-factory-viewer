@@ -27,6 +27,21 @@
   #refreshBtn small { display:block; color:var(--dim); font-size:10px; letter-spacing:.6px; text-transform:none; }
   #refreshBtn:disabled { cursor:progress; opacity:.7; }
   #refreshBtn.failed { color:var(--warm); border-color:rgba(255,162,61,.6); }
+  #mapBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
+  #mapBtn.on { color:var(--accent); border-color:var(--accent); }
+  #mapPanel { top:136px; left:16px; width:400px; max-height:calc(100vh - 230px); padding:14px 16px; display:flex; flex-direction:column; gap:8px; font-size:12px; }
+  #mapPanel[hidden] { display:none; }
+  #mapPanel .k { color:var(--accent); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
+  #mapPanel h2 { margin:0; font-size:16px; font-weight:600; } #mapPanel p { margin:0; color:var(--dim); }
+  #mapPanel h3 { margin:8px 0 2px; font-size:10px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:1.4px; }
+  #mapRules { max-height:30vh; overflow:auto; flex:none; } #mapList { overflow:auto; min-height:90px; flex:1; }
+  #mapPanel .row { display:grid; grid-template-columns:minmax(0,1fr) 150px; gap:8px; align-items:center; padding:3px 0; border-bottom:1px solid rgba(140,170,190,.1); }
+  #mapPanel .row b { font-weight:500; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+  #mapPanel .row small { color:var(--dim); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #mapPanel .row small u { color:var(--warm); cursor:pointer; text-decoration:underline dotted; }
+  #mapPanel select, #mapFilter { background:#0b1118; color:var(--text); border:1px solid var(--line); padding:4px 6px; font-size:11px; width:100%; box-sizing:border-box; }
+  #mapPanel select.set { color:var(--accent); border-color:var(--accent); }
+  #mapState { color:var(--dim); font-size:10px; letter-spacing:.6px; }
   #routeSel option { background:#0b1118; color:var(--text); }
   #hint { top:86px; left:16px; padding:9px 14px; color:var(--dim); font-size:13px; max-width:540px; }
   #detail { top:16px; right:16px; width:290px; padding:14px 16px 16px; }
@@ -70,9 +85,19 @@
   </div>
   <select id="routeSel" class="mono" aria-label="Route"></select>
   <button id="emptyBtn" class="mono"></button>
+  <button id="mapBtn" class="mono">Models</button>
   <button id="refreshBtn" class="mono" hidden></button>
 </div>
 <div id="hint" class="hud"></div>
+<div id="mapPanel" class="hud" hidden>
+  <div class="k mono">Local layer · never written to the ERP</div>
+  <h2>Resource models</h2>
+  <p>The ERP does not say what a resource looks like. Most specific rule wins: resource › group › type › capability › default.</p>
+  <div id="mapRules"></div>
+  <input id="mapFilter" class="mono" type="search" placeholder="Filter resources…" />
+  <div id="mapList"></div>
+  <div id="mapState" class="mono"></div>
+</div>
 <div id="demo" class="mono">Illustrative data · visual prototype</div>
 
 <div id="detail" class="hud">
@@ -131,12 +156,17 @@ for (const route of rawRoutes) for (const op of route.operations) for (const sec
 const assistants = new Set(Object.values(workerAt).map((p) => p.id));
 const stations = SNAP.resources.filter((r) => !assistants.has(r.id));
 const stationIds = new Set(stations.map((r) => r.id));
-function modelFor(r) {
-  if (VISUALS?.byResource?.[r.id]) return VISUALS.byResource[r.id];
-  if (isPerson(r)) return 'bench';
-  if (r.type === 'Vendor') return 'vendor';
-  return (r.capabilities ?? []).map((c) => VISUALS?.byCapability?.[c]).find(Boolean) ?? VISUALS?.fallback ?? 'press';
+// The ERP does not say what a resource looks like. The mapping is a local layer of rules; the most specific wins:
+// resource > resource group > resource type > capability > default.
+const V = { byResource: {}, byGroup: {}, byCapability: {}, fallback: 'press', ...VISUALS, byType: { Personnel: 'bench', Vendor: 'vendor', ...VISUALS?.byType } };
+function resolveModel(r) {
+  if (V.byResource[r.id]) return [V.byResource[r.id], 'this resource'];
+  if (V.byGroup[r.groupId]) return [V.byGroup[r.groupId], `group ${r.groupId}`];
+  if (V.byType[r.type]) return [V.byType[r.type], `type ${r.type}`];
+  const cap = (r.capabilities ?? []).find((c) => V.byCapability[c]);
+  return cap ? [V.byCapability[cap], `capability ${cap}`] : [V.fallback, 'default'];
 }
+const modelFor = (r) => resolveModel(r)[0];
 const SITE = { units: SNAP.productionUnits.map((u) => ({ ...u,
   groups: SNAP.resourceGroups.filter((g) => g.productionUnitId === u.id).sort((a, b) => a.id.localeCompare(b.id)).map((g) => ({ ...g,
     resources: stations.filter((r) => r.groupId === g.id).map((r) => ({ ...r, model: modelFor(r), worker: workerAt[r.id] })) })).filter((g) => g.resources.length || SHOW_EMPTY),
@@ -725,7 +755,7 @@ for (const unit of SITE.units) {
         const under = new THREE.Mesh(new THREE.PlaneGeometry(6.4, built.depth + 2.2), new THREE.MeshBasicMaterial({ map: padGlow, color: new THREE.Color(0x3ddc84).multiplyScalar(1.6), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
         under.rotation.x = -Math.PI / 2; under.position.y = 0.03; under.raycast = () => {}; holder.add(under);
         pickables.push(holder);
-        machines[res.id] = { ...built, res, statusMat, under, glow: 0, active: 0, pos: new THREE.Vector3(x, LEVEL, z) };
+        machines[res.id] = { ...built, res, statusMat, under, holder, bar, tag: rl, glow: 0, active: 0, pos: new THREE.Vector3(x, LEVEL, z) };
         if (res.worker) {
           const w = makeWorker(true); w.position.set(x + 2.9, LEVEL, z + 3.2); w.rotation.y = -2.2; world.add(w);
           w.userData.info = { kind: 'Secondary resource', title: `${res.worker.id} · ${res.worker.name}`, rows: [
@@ -1060,6 +1090,75 @@ function setMode(next) {
 document.querySelectorAll('#modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 playBtn.addEventListener('click', () => { playing = !playing; playBtn.textContent = playing ? 'Pause' : 'Play'; });
 scrub.addEventListener('input', () => { minutes = Number(scrub.value); });
+
+// ---------------------------------------------------------------- resource model mapping (local layer)
+const MODEL_NAMES = { cnc: 'CNC machining centre', robot: 'Robot cell', pack: 'Packaging line', press: 'Stamping press', inspect: 'Inspection cell', tank: 'Coating tank', bench: 'Manual workbench', vendor: 'Subcontractor' };
+const HINTS = [[/press|stamp|punch/i, 'press'], [/cnc|mill|lathe|drill|machin|cut/i, 'cnc'], [/robot|weld|assembl/i, 'robot'], [/pack|wrap|box/i, 'pack'], [/test|inspect|quality|\bqc\b|measur/i, 'inspect'], [/coat|paint|tank|bath|plating/i, 'tank']];
+const mapPanel = document.getElementById('mapPanel'), mapBtn = document.getElementById('mapBtn'), mapState = document.getElementById('mapState');
+const canSave = dataset.startsWith('local/');
+function swapModel(id) {
+  const m = machines[id], model = modelFor(m.res); if (m.res.model === model) return;
+  m.holder.remove(m.group);
+  const built = (ARCHETYPES[model] ?? ARCHETYPES.press)(m.statusMat, m.res); m.holder.add(built.group);
+  Object.assign(m, built); m.res.model = model; m.tag.position.y = built.height + 0.9; m.bar.position.z = built.depth / 2 + 0.06;
+}
+let saveTimer = null;
+function mappingChanged() {
+  for (const id in machines) swapModel(id);
+  drawResources();
+  if (!canSave) { mapState.textContent = 'Sample data: changes last until the page is reloaded.'; return; }
+  mapState.textContent = 'Saving…'; clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`/api/visuals?data=${dataset}`, { method: 'PUT', headers: { 'X-FactoryOps': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ byResource: V.byResource, byGroup: V.byGroup, byType: V.byType, byCapability: V.byCapability, fallback: V.fallback }) });
+      if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+      mapState.textContent = `Saved to data/${dataset}/visuals.json`;
+    } catch (error) { mapState.textContent = `Not saved: ${error.message}`; }
+  }, 400);
+}
+function modelSelect(current, emptyLabel, onChange) {
+  const sel = document.createElement('select'); sel.className = 'mono' + (current ? ' set' : '');
+  if (emptyLabel) sel.add(new Option(emptyLabel, ''));
+  for (const [key, name] of Object.entries(MODEL_NAMES)) sel.add(new Option(name, key));
+  sel.value = current ?? ''; sel.addEventListener('change', () => onChange(sel.value || null)); return sel;
+}
+function row(title, note, select, onTitle) {
+  const el = document.createElement('div'); el.className = 'row';
+  const text = document.createElement('div'), b = document.createElement('b'), small = document.createElement('small');
+  b.textContent = title; b.title = title; if (onTitle) b.addEventListener('click', onTitle);
+  small.append(...[note].flat());
+  text.append(b, small); el.append(text, select); return el;
+}
+const setRule = (table, key) => (value) => { if (value) table[key] = value; else delete table[key]; drawRules(); mappingChanged(); };
+function drawRules() {
+  const box = document.getElementById('mapRules'), keep = box.scrollTop; box.replaceChildren();
+  const count = (test) => { const n = stations.filter(test).length; return `${n} resource${n === 1 ? '' : 's'}`; };
+  const head = (text) => { const h = document.createElement('h3'); h.textContent = text; box.append(h); };
+  head('Default'); box.append(row('Anything without a rule', count(() => true) + ' in this snapshot', modelSelect(V.fallback, null, (v) => { V.fallback = v; mappingChanged(); })));
+  head('By resource type');
+  for (const type of [...new Set(stations.map((r) => r.type))].sort()) box.append(row(type, count((r) => r.type === type), modelSelect(V.byType[type], '— by capability —', setRule(V.byType, type))));
+  head('By capability');
+  for (const cap of [...new Set(stations.flatMap((r) => r.capabilities ?? []))].sort()) box.append(row(cap, count((r) => (r.capabilities ?? []).includes(cap)), modelSelect(V.byCapability[cap], '— no rule —', setRule(V.byCapability, cap))));
+  head('By resource group');
+  for (const g of SNAP.resourceGroups.filter((g) => stations.some((r) => r.groupId === g.id))) box.append(row(`${g.id} · ${g.name}`, count((r) => r.groupId === g.id), modelSelect(V.byGroup[g.id], '— no rule —', setRule(V.byGroup, g.id))));
+  box.scrollTop = keep;
+}
+function drawResources() {
+  const list = document.getElementById('mapList'), q = document.getElementById('mapFilter').value.trim().toLowerCase(), keep = list.scrollTop; list.replaceChildren();
+  const head = document.createElement('h3'); head.textContent = 'By resource'; list.append(head);
+  for (const r of stations) {
+    if (!machines[r.id] || (q && !`${r.id} ${r.name} ${r.groupId} ${r.type} ${(r.capabilities ?? []).join(' ')}`.toLowerCase().includes(q))) continue;
+    const [model, rule] = resolveModel(r), note = [`${MODEL_NAMES[model] ?? model} · from ${rule}`];
+    const hint = r.type === 'Machine' && HINTS.find(([re]) => re.test(r.name))?.[1];
+    if (hint && hint !== model) { const u = document.createElement('u'); u.textContent = `use ${MODEL_NAMES[hint]}?`; u.title = 'Suggested from the resource name'; u.addEventListener('click', () => setRule(V.byResource, r.id)(hint)); note.push(' · ', u); }
+    list.append(row(`${r.id} · ${r.name}`, note, modelSelect(V.byResource[r.id], '— follow rules —', setRule(V.byResource, r.id)),
+      () => { const p = machines[r.id].pos; camera.position.add(new THREE.Vector3(p.x, 1.5, p.z).sub(controls.target)); controls.target.set(p.x, 1.5, p.z); }));
+  }
+  list.scrollTop = keep;
+}
+document.getElementById('mapFilter').addEventListener('input', drawResources);
+mapBtn.addEventListener('click', () => { mapPanel.hidden = !mapPanel.hidden; mapBtn.classList.toggle('on', !mapPanel.hidden);
+  if (!mapPanel.hidden) { drawRules(); drawResources(); mapState.textContent = canSave ? `Changes are saved to data/${dataset}/visuals.json` : 'Sample data: changes last until the page is reloaded.'; } });
 
 const ring = new THREE.Mesh(new THREE.RingGeometry(3.7, 3.95, 4, 1), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x3dd6c6).multiplyScalar(2.5), side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI / 2; ring.rotation.z = Math.PI / 4; ring.visible = false; world.add(ring);
