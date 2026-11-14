@@ -31,12 +31,13 @@
   #timeline { bottom:18px; left:50%; transform:translateX(-50%); padding:10px 16px; display:none; gap:12px; align-items:center; width:min(720px,calc(100vw - 32px)); }
   #timeline button { background:rgba(61,214,198,.16); color:var(--accent); border:1px solid var(--line); padding:6px 12px; font:inherit; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; cursor:pointer; min-width:72px; }
   #timeline input { flex:1; accent-color:var(--accent); }
-  #clock { font-size:16px; min-width:52px; text-align:right; color:var(--accent); }
+  #clock { font-size:15px; min-width:52px; white-space:nowrap; text-align:right; color:var(--accent); }
   #legend { bottom:18px; left:16px; padding:8px 14px; font-size:12px; color:var(--dim); display:flex; gap:14px; }
   #legend i { display:inline-block; width:8px; height:8px; margin-right:6px; box-shadow:0 0 8px currentColor; }
   .lbl { white-space:nowrap; font-family:Consolas,"Cascadia Mono",ui-monospace,monospace; font-size:11px; letter-spacing:.6px; }
   .lbl.res { background:rgba(7,11,16,.82); border:1px solid var(--line); border-left:3px solid var(--accent); padding:1px 7px; color:var(--text); }
   .lbl.op { color:#06110f; background:var(--accent); padding:1px 7px; font-weight:700; }
+  .lbl.op.assist { background:var(--warm); }
   .lbl.order { background:rgba(7,11,16,.85); padding:1px 7px; border:1px solid currentColor; }
   .lbl.pad { color:var(--warm); border:1px solid rgba(255,162,61,.5); background:rgba(7,11,16,.8); padding:1px 7px; text-transform:uppercase; }
   #demo { position:fixed; top:16px; left:50%; transform:translateX(-50%); font-size:11px; color:var(--dim); letter-spacing:1.4px; text-transform:uppercase; }
@@ -74,7 +75,7 @@
 
 <div id="timeline" class="hud">
   <button id="play">Pause</button>
-  <input id="scrub" type="range" min="0" max="480" step="1" value="0" />
+  <input id="scrub" type="range" min="0" max="480" step="any" value="0" />
   <span id="clock" class="mono">06:00</span>
 </div>
 <div id="legend" class="hud mono">
@@ -99,34 +100,72 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // The viewer never talks to the ERP. It reads a snapshot (the manufacturing model as extracted)
 // and a local visuals file (which 3D model stands for which resource). `?data=<folder>` picks the set.
 const requested = new URLSearchParams(location.search).get('data') ?? 'sample';
-const dataset = /^[\w-]+$/.test(requested) ? requested : 'sample';
+const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? requested : 'sample';
 async function loadJson(name) { const r = await fetch(`../data/${dataset}/${name}.json`); return r.ok ? r.json() : null; }
 const [SNAP, VISUALS] = await Promise.all([loadJson('snapshot'), loadJson('visuals')]);
 if (!SNAP) { document.getElementById('loading').textContent = `No snapshot found in data/${dataset}`; throw new Error('Snapshot missing'); }
 
-const isPerson = (r) => r.type === 'HumanResource';
-const people = Object.fromEntries(SNAP.resources.filter(isPerson).map((r) => [r.id, r]));
-const placeable = SNAP.resources.filter((r) => !isPerson(r));
-const alternativesOf = (op) => op.requirement?.resourceId ? [op.requirement.resourceId] : placeable.filter((r) => r.groupId === op.requirement?.groupId).map((r) => r.id);
-// A person appears on the floor only as a secondary resource of an operation, next to the machine they assist.
+const isPerson = (r) => r.type === 'Personnel';
+const byId = Object.fromEntries(SNAP.resources.map((r) => [r.id, r]));
+const rawRoutes = SNAP.routes ?? [];
+const primaryIds = new Set(rawRoutes.flatMap((r) => r.operations.flatMap((o) => o.eligibleResourceIds ?? [])));
+// A person who is the primary resource of an operation gets a manual workstation of their own.
+// A person who only ever assists (secondary operations) stands next to the machine they assist.
 const workerAt = {};
-for (const route of SNAP.routes ?? []) for (const op of route.operations) {
-  const alts = alternativesOf(op);
-  (op.secondary ?? []).forEach((id, i) => { const target = alts[i % Math.max(1, alts.length)]; if (target && people[id]) workerAt[target] ??= people[id]; });
+for (const route of rawRoutes) for (const op of route.operations) for (const sec of op.secondary ?? []) {
+  const hosts = (op.eligibleResourceIds ?? []).filter((id) => byId[id] && !isPerson(byId[id]));
+  (sec.eligibleResourceIds ?? []).forEach((id, i) => {
+    const person = byId[id]; if (!person || !isPerson(person) || primaryIds.has(id) || !hosts.length) return;
+    if (!Object.values(workerAt).includes(person)) workerAt[hosts[i % hosts.length]] ??= person;
+  });
 }
-const modelFor = (r) => VISUALS?.byResource?.[r.id] ?? (r.capabilities ?? []).map((c) => VISUALS?.byCapability?.[c]).find(Boolean) ?? VISUALS?.fallback ?? 'press';
+const assistants = new Set(Object.values(workerAt).map((p) => p.id));
+const stations = SNAP.resources.filter((r) => !assistants.has(r.id));
+const stationIds = new Set(stations.map((r) => r.id));
+function modelFor(r) {
+  if (VISUALS?.byResource?.[r.id]) return VISUALS.byResource[r.id];
+  if (isPerson(r)) return 'bench';
+  if (r.type === 'Vendor') return 'vendor';
+  return (r.capabilities ?? []).map((c) => VISUALS?.byCapability?.[c]).find(Boolean) ?? VISUALS?.fallback ?? 'press';
+}
 const SITE = { units: SNAP.productionUnits.map((u) => ({ ...u,
-  groups: SNAP.resourceGroups.filter((g) => g.productionUnitId === u.id).map((g) => ({ ...g,
-    resources: placeable.filter((r) => r.groupId === g.id).map((r) => ({ ...r, model: modelFor(r), worker: workerAt[r.id] })) })).filter((g) => g.resources.length),
+  groups: SNAP.resourceGroups.filter((g) => g.productionUnitId === u.id).sort((a, b) => a.id.localeCompare(b.id)).map((g) => ({ ...g,
+    resources: stations.filter((r) => r.groupId === g.id).map((r) => ({ ...r, model: modelFor(r), worker: workerAt[r.id] })) })).filter((g) => g.resources.length),
 })).filter((u) => u.groups.length) };
-const ROUTES = (SNAP.routes ?? []).map((r) => ({ id: r.id, name: r.name, product: r.productId,
-  ops: r.operations.map((o) => ({ no: o.number, name: o.name, group: o.requirement?.groupId, alternatives: alternativesOf(o), dwell: o.runTime ?? 3 })).filter((o) => o.alternatives.length) }));
+const hiddenGroups = SNAP.resourceGroups.length - SITE.units.reduce((n, u) => n + u.groups.length, 0);
+const ROUTES = rawRoutes.map((r) => {
+  const longest = Math.max(0, ...r.operations.map((o) => o.runHoursPerUnit ?? 0));
+  return { id: r.id, name: r.name, product: r.productId,
+    ops: r.operations.map((o) => ({ no: o.number, name: o.name, hours: o.runHoursPerUnit ?? 0,
+      alternatives: (o.eligibleResourceIds ?? []).filter((id) => stationIds.has(id)),
+      assistants: (o.secondary ?? []).map((s) => (s.eligibleResourceIds ?? []).filter((id) => byId[id])).filter((s) => s.length),
+      needs: [...(o.requirement?.capabilities ?? []).map((c) => c.name), o.requirement?.resourceType].filter(Boolean).join(' + '),
+      dwell: longest ? 2 + 4 * ((o.runHoursPerUnit ?? 0) / longest) : 3 })).filter((o) => o.alternatives.length) };
+}).filter((r) => r.ops.length);
 const PALETTE = [0x4cc9f0, 0xf72585, 0xffd166, 0x9b5de5, 0x06d6a0, 0xff7b54, 0x90be6d, 0xf9844a];
-const ORDERS = (SNAP.productionOrders ?? []).map((o, i) => ({ id: o.id, product: o.productId, colour: PALETTE[i % PALETTE.length], jobs: (o.jobs ?? []).map((j) => [j.resourceId, j.start, j.end]) }));
-const DAY = SNAP.schedule?.minutes ?? 480;
+const rawOrders = SNAP.productionOrders ?? [];
+const DATED = rawOrders.some((o) => (o.jobs ?? []).some((j) => typeof j.start === 'string'));
+const stamps = rawOrders.flatMap((o) => (o.jobs ?? []).flatMap((j) => [j.start, j.end])).filter(Boolean);
+const T0 = DATED ? Math.min(...stamps.map((x) => Date.parse(x + 'Z'))) - 12 * 3.6e6 : 0;
+const clockOf = (x) => (DATED ? (Date.parse(x + 'Z') - T0) / 3.6e6 : x);          // hours for ERP data, minutes for the sample
+const TRAVEL = DATED ? 10 : 15, MIN_BUSY = DATED ? 8 : 0;
+const productColour = {};
+const ORDERS = rawOrders.map((o) => {
+  const jobs = (o.jobs ?? []).filter((j) => j.start != null && j.resourceId).map((j) => ({ primary: !j.priority || j.priority === 'Primary', row: [j.resourceId, clockOf(j.start), clockOf(j.end ?? j.start)] }));
+  productColour[o.productId] ??= PALETTE[Object.keys(productColour).length % PALETTE.length];
+  return { id: o.id, product: o.productId, colour: productColour[o.productId],
+    jobs: jobs.filter((j) => j.primary).map((j) => j.row).sort((x, y) => x[1] - y[1]), assists: jobs.filter((j) => !j.primary).map((j) => j.row),
+    rows: [['Product', o.productId ?? '—'], ['Status', o.status ?? '—'], ['Quantity', o.quantity ?? '—'], ['Route', o.routeId ?? '—'], ['Scheduled start', (o.scheduledStart ?? '—').replace('T', ' ')], ['Scheduled end', (o.scheduledEnd ?? '—').replace('T', ' ')], ['Delivery', o.deliveryDate ?? '—']] };
+});
+const DAY = DATED ? Math.max(24, ...ORDERS.flatMap((o) => o.jobs.map((j) => j[2]))) + 24 : SNAP.schedule?.minutes ?? 480;
 const DAY_START = (() => { const [h, m] = (SNAP.schedule?.startLabel ?? '06:00').split(':').map(Number); return h * 60 + m; })();
+function clockLabel(t) {
+  if (DATED) return new Date(T0 + t * 3.6e6).toISOString().slice(0, 16).replace('T', ' ');
+  const total = DAY_START + Math.round(t); return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+}
 document.getElementById('scope').textContent = `${SNAP.meta?.company ?? ''} // SITE ${SNAP.meta?.site ?? ''}`;
-document.getElementById('demo').textContent = SNAP.meta?.source === 'sample' ? 'Illustrative data · sample snapshot' : `Snapshot ${dataset} · ${SNAP.meta?.extractedAt ?? ''}`;
+document.getElementById('demo').textContent = SNAP.meta?.source === 'sample' ? 'Illustrative data · sample snapshot'
+  : `D365FO snapshot · ${SNAP.meta?.company} site ${SNAP.meta?.site} · effective ${SNAP.meta?.effectiveDate ?? ''}` + (hiddenGroups ? ` · ${hiddenGroups} empty groups hidden` : '');
 
 // ---------------------------------------------------------------- renderer
 const stage = document.getElementById('stage');
@@ -211,6 +250,7 @@ const M = {
   skin: std(0xe8b796, 0.8, 0), boot: std(0x1b1d22, 0.8, 0), vest: std(0xff7a1a, 0.7, 0), rubber: std(0x101216, 0.9, 0),
   hazard: std(0xffffff, 0.7, 0, { map: hazard }), display: std(0x06202a, 0.3, 0, { emissive: 0x35c8e8, emissiveIntensity: 1.6 }),
 };
+Object.assign(M, { wood: std(0x9a7448, 0.8, 0), cabinet: std(0x3a2c22, 0.55, 0.1), tealDark: std(0x176f68, 0.6, 0.3) });
 const glow = (hex, intensity = 3) => std(0x111111, 0.4, 0, { emissive: hex, emissiveIntensity: intensity });
 function box(w, h, d, mat, x = 0, y = 0, z = 0, r = 0.06) {
   const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2.01, h / 2.01, d / 2.01)), mat);
@@ -368,7 +408,72 @@ function makeInspect(statusMat) {
     sample.position.z = ((p * 0.5) % 1) * 3.4 - 1.7;
   } };
 }
-const ARCHETYPES = { cnc: makeCnc, robot: makeRobot, pack: makePack, press: makePress, inspect: makeInspect };
+function makeBench(statusMat, res) {
+  const g = new THREE.Group(); g.scale.setScalar(SCALE);
+  const mat = box(3.3, 0.04, 3.5, M.rubber, 0, 0.02, 0, 0.01); mat.castShadow = false; g.add(mat);
+  for (const z of [-1.75, 1.75]) { const s = stripe(3.3, 0.12); s.position.set(0, 0.045, z); g.add(s); }
+  for (const [x, z] of [[-1.2, -1.0], [1.2, -1.0], [-1.2, -0.2], [1.2, -0.2]]) g.add(box(0.1, 0.92, 0.1, M.graphite, x, 0.46, z, 0.02));
+  g.add(box(2.7, 0.1, 1.0, M.wood, 0, 0.97, -0.6, 0.02)); g.add(box(2.5, 0.06, 0.08, M.steel, 0, 0.3, -1.0, 0.01));
+  g.add(box(0.75, 0.62, 0.85, M.blue, -0.85, 0.6, -0.6, 0.03));
+  for (const y of [0.42, 0.6, 0.78]) g.add(box(0.5, 0.03, 0.03, M.steel, -0.85, y, -0.16, 0.005));
+  for (const x of [-1.3, 1.3]) g.add(box(0.08, 1.2, 0.08, M.graphite, x, 1.6, -1.08, 0.02));
+  g.add(box(2.6, 0.85, 0.05, M.graphite, 0, 1.6, -1.1, 0.01));
+  [M.orange, M.yellow, M.teal, M.steel, M.orange, M.blue].forEach((m, k) => g.add(box(0.09, 0.22 + (k % 3) * 0.1, 0.05, m, -1.0 + k * 0.28, 1.62, -1.05, 0.01)));
+  g.add(box(2.4, 0.07, 0.3, M.graphite, 0, 2.2, -0.85, 0.02));
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.02, 0.14), glow(0xfff1d6, 2.4)); strip.position.set(0, 2.16, -0.85); g.add(strip);
+  g.add(box(0.52, 0.36, 0.05, M.graphite, 0.95, 1.38, -0.95, 0.02));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.28), M.display); screen.position.set(0.95, 1.38, -0.92); g.add(screen);
+  g.add(cyl(0.05, 0.05, 0.5, M.steel, 1.3, 2.4, -1.08, 8)); g.add(cyl(0.1, 0.1, 0.12, statusMat, 1.3, 2.7, -1.08, 14));
+  const caps = res?.capabilities ?? []; const part = new THREE.Group(); part.position.set(-0.05, 1.02, -0.55); g.add(part);
+  if (caps.includes('Packing')) { part.add(box(0.62, 0.46, 0.5, M.carton, 0, 0.23, 0, 0.03)); g.add(box(0.5, 0.4, 0.45, M.carton, 1.0, 0.2, 0.9, 0.03)); g.add(box(0.5, 0.4, 0.45, M.carton, 1.05, 0.6, 0.92, 0.03)); }
+  else if (caps.includes('Polishing') || caps.includes('Cabinets')) { part.add(box(0.6, 0.95, 0.5, M.cabinet, 0, 0.475, 0, 0.04));
+    for (const y of [0.3, 0.68]) { const cone = cyl(0.17, 0.17, 0.04, M.rubber, 0, y, 0.26, 20); cone.rotation.x = Math.PI / 2; part.add(cone); } }
+  else { part.add(box(0.7, 0.14, 0.5, M.steel, 0, 0.07, 0, 0.02)); part.add(box(0.3, 0.1, 0.2, M.teal, -0.1, 0.19, 0, 0.02)); part.add(cyl(0.07, 0.07, 0.16, M.orange, 0.22, 0.22, 0.05, 10)); }
+  g.add(box(0.5, 0.3, 0.7, M.teal, 0.75, 1.17, -0.75, 0.03));
+  const worker = makeWorker(); worker.scale.setScalar(1.15 / SCALE); worker.position.set(0, 0.04, 0.42); worker.rotation.y = Math.PI; g.add(worker);
+  let p = 0;
+  return { group: g, height: 2.75 * SCALE, depth: 3.5 * SCALE, update(dt, on) {
+    if (on) p += dt;
+    const [a, b] = worker.userData.arms; a.rotation.x = on ? -1.0 + Math.sin(p * 6) * 0.3 : 0; b.rotation.x = on ? -1.0 + Math.cos(p * 5) * 0.3 : 0;
+    strip.material.emissiveIntensity = on ? 3.2 : 1.2;
+  } };
+}
+function makeVendor(statusMat) {
+  const g = new THREE.Group(); g.scale.setScalar(SCALE);
+  const pad = box(3.4, 0.06, 4.3, M.graphite, 0, 0.03, 0, 0.01); pad.castShadow = false; g.add(pad);
+  for (const z of [-2.15, 2.15]) { const s = stripe(3.4, 0.12); s.position.set(0, 0.065, z); g.add(s); }
+  g.add(box(1.6, 0.18, 3.5, M.dark, -0.55, 0.52, -0.2, 0.03)); g.add(box(1.75, 1.7, 3.5, M.teal, -0.55, 1.46, -0.2, 0.05));
+  for (let k = 0; k < 7; k++) g.add(box(1.79, 1.55, 0.05, M.tealDark, -0.55, 1.46, -1.7 + k * 0.5, 0.01));
+  for (const x of [-0.95, -0.15]) g.add(box(0.72, 1.5, 0.04, M.tealDark, x, 1.46, 1.57, 0.01));
+  for (const x of [-0.6, -0.5]) g.add(box(0.04, 1.3, 0.05, M.steel, x, 1.46, 1.6, 0.01));
+  for (const [x, z] of [[-1.35, -1.3], [0.25, -1.3], [-1.35, 0.9], [0.25, 0.9]]) { const w = cyl(0.3, 0.3, 0.22, M.rubber, x, 0.3, z, 16); w.rotation.z = Math.PI / 2; g.add(w); }
+  g.add(cyl(0.07, 0.07, 1.1, M.graphite, 1.25, 0.55, 1.8, 10)); g.add(box(0.3, 0.4, 0.3, M.yellow, 1.25, 0.9, 1.8, 0.04));
+  const arm = new THREE.Group(); arm.position.set(1.25, 1.0, 1.95); const bar = stripe(2.3, 0.1); bar.rotation.x = 0; bar.position.set(-1.15, 0, 0); arm.add(bar); arm.add(box(2.3, 0.1, 0.05, M.white, -1.15, 0, -0.03, 0.01)); g.add(arm);
+  g.add(box(1.0, 0.45, 0.07, M.orange, 1.15, 2.2, -1.6, 0.02)); g.add(cyl(0.05, 0.05, 2.0, M.graphite, 1.15, 1.0, -1.6, 8));
+  g.add(cyl(0.1, 0.1, 0.12, statusMat, 1.15, 2.52, -1.6, 14));
+  let p = 0;
+  return { group: g, height: 2.6 * SCALE, depth: 4.3 * SCALE, update(dt, on) { p += ((on ? 1 : 0) - p) * Math.min(1, dt * 3); arm.rotation.z = -p * 1.2; } };
+}
+function makeTank(statusMat) {
+  const g = new THREE.Group(); g.scale.setScalar(SCALE); plinth(g);
+  for (const x of [-0.95, 0.35]) { g.add(cyl(0.55, 0.55, 1.8, M.steel, x, 1.3, -1.25, 24)); g.add(cyl(0.57, 0.57, 0.1, M.orange, x, 1.75, -1.25, 24));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.55, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), M.steel); dome.position.set(x, 2.2, -1.25); dome.castShadow = true; g.add(dome);
+    const pipe = cyl(0.07, 0.07, 1.2, M.orange, x, 0.75, -0.35, 10); pipe.rotation.x = Math.PI / 2; g.add(pipe); }
+  g.add(box(2.7, 0.9, 1.6, M.graphite, 0, 0.8, 0.75, 0.05)); g.add(box(2.8, 0.08, 1.7, M.steel, 0, 1.26, 0.75, 0.02));
+  const liquid = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.03, 1.35), glow(0x2fd3c0, 0.8)); liquid.position.set(0, 1.3, 0.75); g.add(liquid);
+  for (const x of [-1.55, 1.55]) g.add(box(0.12, 2.5, 0.12, M.white, x, 1.6, 0.75, 0.03));
+  g.add(box(3.25, 0.16, 0.22, M.yellow, 0, 2.9, 0.75, 0.03));
+  const hoist = new THREE.Group(); hoist.position.set(0, 2.75, 0.75); hoist.add(box(0.4, 0.25, 0.4, M.orange, 0, 0, 0, 0.04)); g.add(hoist);
+  const drop = new THREE.Group(); hoist.add(drop); drop.add(cyl(0.02, 0.02, 1.0, M.steel, 0, -0.5, 0, 6)); drop.add(box(0.6, 0.4, 0.5, M.cabinet, 0, -1.15, 0, 0.04));
+  console_(g, 1.3, 1.85); g.add(cyl(0.1, 0.1, 0.12, statusMat, 1.55, 2.95, 0.75, 14));
+  let p = 0;
+  return { group: g, height: 3.0 * SCALE, depth: 4.35 * SCALE, update(dt, on) {
+    if (on) p += dt;
+    hoist.position.x = Math.sin(p * 0.9) * 0.8; drop.position.y = 0.35 - (0.5 + 0.5 * Math.sin(p * 1.8)) * 0.55;
+    liquid.material.emissiveIntensity = on ? 1.8 + Math.sin(p * 4) * 0.5 : 0.6;
+  } };
+}
+const ARCHETYPES = { cnc: makeCnc, robot: makeRobot, pack: makePack, press: makePress, inspect: makeInspect, bench: makeBench, vendor: makeVendor, tank: makeTank };
 
 function makeWorker() {
   const g = new THREE.Group();
@@ -384,17 +489,27 @@ function makeWorker() {
 }
 
 // ---------------------------------------------------------------- automatic layout from the hierarchy
-const CELL = 7.6, LEVEL = 0.36, AISLE = 3.2, LANE = 5.3;
+// Resources fill a group three to a row; groups are shelf-packed inside their production unit;
+// production units sit side by side. No coordinate comes from the data.
+const CELL = 7.6, ROW = 10.6, LEVEL = 0.36, AISLE = 3.2, LANE = 5.3, PER_ROW = 3, UNIT_MAX = 38;
 const world = new THREE.Group(); scene.add(world);
 const machines = {}, groupsById = {}, pickables = [], spinners = [];
 
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), std(0x222932, 0.95, 0, { map: (() => { const t = concrete.clone(); t.needsUpdate = true; t.repeat.set(75, 75); return t; })() }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), std(0x222932, 0.95, 0, { map: (() => { const t = concrete.clone(); t.needsUpdate = true; t.repeat.set(112, 112); return t; })() }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
 
 for (const unit of SITE.units) {
-  for (const group of unit.groups) { group.w = group.resources.length * CELL + 1.6; group.d = CELL + 2.4; }
-  unit.w = Math.max(...unit.groups.map((g) => g.w)) + 3;
-  unit.d = unit.groups.reduce((s, g) => s + g.d, 0) + (unit.groups.length - 1) * AISLE + 2.6 + 3.4;
+  const shelves = [];
+  for (const group of unit.groups) {
+    const rows = Math.ceil(group.resources.length / PER_ROW);
+    group.w = Math.min(PER_ROW, group.resources.length) * CELL + 1.6; group.d = (rows - 1) * ROW + CELL + 2.4;
+    let shelf = shelves[shelves.length - 1];
+    if (!shelf || shelf.w + AISLE + group.w > UNIT_MAX) { shelf = { w: 0, d: 0, groups: [] }; shelves.push(shelf); }
+    group.offset = shelf.groups.length ? shelf.w + AISLE : 0; shelf.w = group.offset + group.w; shelf.d = Math.max(shelf.d, group.d); shelf.groups.push(group);
+  }
+  unit.shelves = shelves;
+  unit.w = Math.max(...shelves.map((s) => s.w)) + 3;
+  unit.d = shelves.reduce((s, x) => s + x.d, 0) + (shelves.length - 1) * AISLE + 2.6 + 3.4;
 }
 const PAD = 10;
 const siteW = SITE.units.reduce((s, u) => s + u.w, 0) + (SITE.units.length - 1) * AISLE + PAD * 2 + 4;
@@ -402,44 +517,56 @@ const siteD = Math.max(...SITE.units.map((u) => u.d)) + 6;
 world.add(slab(siteW, siteD, 0.24, 0.24, 0x8e98a4));
 border(world, siteW - 0.5, siteD - 0.5, 0, 0.245, 0);
 
+const KIND = { Personnel: 'Manual workstation', Vendor: 'Subcontractor', Machine: 'Machine' };
 let cursorX = -siteW / 2 + PAD + 2;
 for (const unit of SITE.units) {
   const ux = cursorX + unit.w / 2; cursorX += unit.w + AISLE;
   const us = slab(unit.w, unit.d, 0.06, 0.3, 0xa9b4c0); us.position.x = ux; world.add(us);
   const ut = paintedText(`${unit.id}  ${unit.name}`, 1.25, '#e9eef3', 0.55); ut.position.set(ux - unit.w / 2 + 0.7, 0.31, -unit.d / 2 + 1.35); world.add(ut);
-  let cursorZ = -unit.d / 2 + 2.6;
-  for (const group of unit.groups) {
-    const gz = cursorZ + group.d / 2; cursorZ += group.d + AISLE;
-    const gs = slab(group.w, group.d, 0.06, LEVEL, 0x6f7f90, 4); gs.position.set(ux, gs.position.y, gz);
-    gs.material.emissive = new THREE.Color(0x3dd6c6); gs.material.emissiveIntensity = 0; world.add(gs);
-    border(world, group.w, group.d, ux, LEVEL + 0.005, gz);
-    const gt = paintedText(`${group.id}  ${group.name}`, 0.8, '#7ff0e3', 0.8); gt.position.set(ux - group.w / 2 + 0.6, LEVEL + 0.01, gz + group.d / 2 - 0.75); world.add(gt);
-    groupsById[group.id] = { group, unit, mat: gs.material, x: ux, z: gz };
-    group.resources.forEach((res, i) => {
-      const x = ux - group.w / 2 + 0.8 + CELL / 2 + i * CELL, z = gz - group.d / 2 + 0.6 + CELL / 2 - 0.4;
-      const statusMat = glow(0x5b7a99, 1.2);
-      const built = ARCHETYPES[res.model](statusMat);
-      const holder = new THREE.Group(); holder.position.set(x, LEVEL, z); holder.add(built.group); world.add(holder);
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.07, 0.09), statusMat); bar.position.set(0, 0.2, built.depth / 2 + 0.06); holder.add(bar);
-      const bar2 = bar.clone(); bar2.position.z = -built.depth / 2 - 0.06; holder.add(bar2);
-      const rl = label(`${res.id} ${res.name.toUpperCase()}`, 'res'); rl.position.set(0, built.height + 0.9, 0); holder.add(rl);
-      holder.userData.info = { kind: 'Resource', title: `${res.id} · ${res.name}`, rows: [
-        ['Type', 'Machine'], ['Group', `${group.id} ${group.name}`], ['Production unit', unit.name],
-        ['Capability', (res.capabilities ?? []).join(', ') || '—'], ['Efficiency', res.efficiency == null ? '—' : res.efficiency + '%'], ['Calendar', res.calendarId ?? '—'],
-        ['On route', ROUTES.flatMap((r) => r.ops.filter((o) => o.alternatives.includes(res.id)).map((o) => `${r.id} op ${o.no}`)).join(', ') || '—'] ] };
-      pickables.push(holder);
-      machines[res.id] = { ...built, res, statusMat, active: 0, pos: new THREE.Vector3(x, LEVEL, z) };
-      if (res.worker) {
-        const w = makeWorker(); w.position.set(x + 2.9, LEVEL, z + 3.2); w.rotation.y = -2.2; world.add(w);
-        w.userData.info = { kind: 'Secondary resource', title: `${res.worker.id} · ${res.worker.name}`, rows: [
-          ['Type', 'Human resource'], ['Works with', `${res.id} ${res.name}`], ['Role', 'Secondary on the operation'], ['Calendar', res.worker.calendarId ?? '—'] ] };
-        pickables.push(w); machines[res.id].worker = w;
-      }
-    });
-    const cab = box(1.0, 2.0, 0.7, M.graphite, ux + group.w / 2 - 0.9, LEVEL + 1.0, gz - group.d / 2 + 0.6, 0.05); world.add(cab);
-    for (let k = 0; k < 3; k++) { const led = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), glow([0x3ddc84, 0xffa23d, 0x3dd6c6][k], 3)); led.position.set(cab.position.x - 0.25 + k * 0.25, LEVEL + 1.7, cab.position.z + 0.36); world.add(led); }
+  let shelfZ = -unit.d / 2 + 2.6;
+  for (const shelf of unit.shelves) {
+    for (const group of shelf.groups) {
+      const gx = ux - unit.w / 2 + 1.5 + group.offset + group.w / 2, gz = shelfZ + group.d / 2;
+      const gs = slab(group.w, group.d, 0.06, LEVEL, 0x6f7f90, 4); gs.position.set(gx, gs.position.y, gz);
+      gs.material.emissive = new THREE.Color(0x3dd6c6); gs.material.emissiveIntensity = 0; world.add(gs);
+      border(world, group.w, group.d, gx, LEVEL + 0.005, gz);
+      const gt = paintedText(`${group.id}  ${group.name}`, 0.8, '#7ff0e3', 0.8); gt.position.set(gx - group.w / 2 + 0.6, LEVEL + 0.01, gz + group.d / 2 - 0.75); world.add(gt);
+      groupsById[group.id] = { group, unit, mat: gs.material, x: gx, z: gz };
+      group.resources.forEach((res, i) => {
+        const x = gx - group.w / 2 + 0.8 + CELL / 2 + (i % PER_ROW) * CELL, z = gz - group.d / 2 + 0.2 + CELL / 2 + Math.floor(i / PER_ROW) * ROW;
+        const statusMat = glow(0x5b7a99, 1.2);
+        const built = (ARCHETYPES[res.model] ?? ARCHETYPES.press)(statusMat, res);
+        const holder = new THREE.Group(); holder.position.set(x, LEVEL, z); holder.add(built.group); world.add(holder);
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.07, 0.09), statusMat); bar.position.set(0, 0.2, built.depth / 2 + 0.06); holder.add(bar);
+        const rl = label(res.id, 'res'); rl.position.set(0, built.height + 0.9, 0); holder.add(rl);
+        const onRoutes = ROUTES.filter((r) => r.ops.some((o) => o.alternatives.includes(res.id) || o.assistants.some((s) => s.includes(res.id))));
+        holder.userData.info = { kind: KIND[res.type] ?? res.type, title: `${res.id} · ${res.name}`, rows: [
+          ['Resource type', res.type], ['Group', `${group.id} ${group.name}`], ['Production unit', unit.name],
+          ['Capabilities', (res.capabilities ?? []).join(', ') || '—'], ['Efficiency', res.efficiency == null ? '—' : res.efficiency + '%'], ['Calendar', res.calendarId ?? '—'],
+          ['Eligible on', onRoutes.length ? `${onRoutes.length} route${onRoutes.length > 1 ? 's' : ''}` : '—'] ] };
+        pickables.push(holder);
+        machines[res.id] = { ...built, res, statusMat, active: 0, pos: new THREE.Vector3(x, LEVEL, z) };
+        if (res.worker) {
+          const w = makeWorker(); w.position.set(x + 2.9, LEVEL, z + 3.2); w.rotation.y = -2.2; world.add(w);
+          w.userData.info = { kind: 'Secondary resource', title: `${res.worker.id} · ${res.worker.name}`, rows: [
+            ['Resource type', res.worker.type], ['Works with', `${res.id} ${res.name}`], ['Role', 'Secondary on the operation'], ['Calendar', res.worker.calendarId ?? '—'] ] };
+          pickables.push(w); machines[res.id].worker = w;
+        }
+      });
+      const cab = box(1.0, 2.0, 0.7, M.graphite, gx + group.w / 2 - 0.9, LEVEL + 1.0, gz - group.d / 2 + 0.6, 0.05); world.add(cab);
+      for (let k = 0; k < 3; k++) { const led = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), glow([0x3ddc84, 0xffa23d, 0x3dd6c6][k], 3)); led.position.set(cab.position.x - 0.25 + k * 0.25, LEVEL + 1.7, cab.position.z + 0.36); world.add(led); }
+    }
+    shelfZ += shelf.d + AISLE;
   }
 }
+// Fit camera, fog and shadows to the generated floor.
+const reach = Math.max(siteW * 1.15, siteD * 1.9);
+camera.position.copy(new THREE.Vector3(0.52, 0.5, 0.72).normalize().multiplyScalar(reach));
+camera.far = reach * 6; camera.updateProjectionMatrix();
+controls.maxDistance = reach * 1.8; scene.fog.near = reach * 1.3; scene.fog.far = reach * 3.6;
+const half = Math.max(siteW, siteD) / 2 + 16;
+Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, far: half * 5 });
+sun.position.set(half * 0.55, half * 1.1, half * 0.7); sun.shadow.camera.updateProjectionMatrix();
 
 // ---------------------------------------------------------------- environment: hall walls, pipes, props
 function pallet(g, x, z, n, y = 0) {
@@ -529,32 +656,39 @@ function ribbon(c, width = 0.9) {
 }
 
 // ---------------------------------------------------------------- route layer: carts carry the work between operations
+// An operation rarely names one machine: it names capabilities. Every eligible resource is a possible stop,
+// and carts spread across them. Where two consecutive operations both have several candidates, lanes meet
+// at a junction instead of joining every pair.
 const routeLayer = new THREE.Group(); world.add(routeLayer);
 const routeStatic = new THREE.Group(); routeLayer.add(routeStatic);
 const laneMat = new THREE.MeshBasicMaterial({ map: chevron, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(1.6, 1.6, 1.6), toneMapped: false });
 const START = { key: 'raw', pos: RAW.clone().add(new THREE.Vector3(3.6, 0, 1)) }, END = { key: 'fin', pos: FIN.clone().add(new THREE.Vector3(-3.6, 0, 1)) };
-const stopOf = (id) => ({ key: id, pos: front(id) });
-let ROUTE = null, stages = [], curveCache = new Map();
+let ROUTE = null, layers = [], curveCache = new Map();
 function curveFor(a, b) { const k = a.key + '>' + b.key; if (!curveCache.has(k)) curveCache.set(k, curve(a.pos, b.pos)); return curveCache.get(k); }
+const centre = (stops) => stops.reduce((v, s) => v.add(s.pos), new THREE.Vector3()).multiplyScalar(1 / stops.length);
 function buildRoute(route) {
   for (const child of [...routeStatic.children]) { child.element?.remove(); child.geometry?.dispose(); routeStatic.remove(child); }
-  ROUTE = route; curveCache = new Map(); clearRoute();
-  for (const id in groupsById) groupsById[id].mat.emissiveIntensity = 0;
-  if (!route) { stages = []; return; }
-  stages = [[START], ...route.ops.map((op) => op.alternatives.filter((id) => machines[id]).map(stopOf)), [END]].filter((s) => s.length);
-  for (let i = 0; i < stages.length - 1; i++) for (const a of stages[i]) for (const b of stages[i + 1]) {
+  ROUTE = route; curveCache = new Map(); clearRoute(); layers = [];
+  if (!route) return;
+  const sequence = [[START], ...route.ops.map((op) => op.alternatives.map((id) => ({ key: id, pos: front(id), machine: id, op }))), [END]];
+  layers.push(sequence[0]);
+  for (let i = 1; i < sequence.length; i++) {
+    const prev = sequence[i - 1], next = sequence[i];
+    if (prev.length > 1 && next.length > 1) layers.push([{ key: 'junction' + i, pos: centre(prev).lerp(centre(next), 0.5) }]);
+    layers.push(next);
+  }
+  for (let i = 0; i < layers.length - 1; i++) for (const a of layers[i]) for (const b of layers[i + 1]) {
     const lane = new THREE.Mesh(ribbon(curveFor(a, b)), laneMat); lane.position.y = LEVEL; routeStatic.add(lane);
   }
-  for (const op of route.ops) {
-    if (op.group && groupsById[op.group]) groupsById[op.group].mat.emissiveIntensity = 0.1;
-    for (const id of op.alternatives) if (machines[id]) {
-      const tag = label(`OP ${op.no} · ${op.name.toUpperCase()}`, 'op'); tag.position.copy(machines[id].pos).add(new THREE.Vector3(0, machines[id].height + 1.7, 0)); routeStatic.add(tag);
-    }
-  }
+  const tagged = new Set();
+  const tag = (id, text, cls) => { if (!machines[id] || tagged.has(id)) return; tagged.add(id);
+    const t = label(text, cls); t.position.copy(machines[id].pos).add(new THREE.Vector3(0, machines[id].height + 1.7, 0)); routeStatic.add(t); };
+  for (const op of route.ops) for (const id of op.alternatives) tag(id, `OP ${op.no}`, 'op');
+  for (const op of route.ops) for (const set of op.assistants) for (const id of set) tag(id, `OP ${op.no} +`, 'op assist');
 }
 function describeRoute(route) {
   if (!route) return 'This snapshot has no routes.';
-  return `Route ${route.id} · ${route.product}: ` + route.ops.map((o) => `op ${o.no} ${o.group ? 'accepts any resource in group ' + o.group : 'needs resource ' + o.alternatives[0]}`).join(', ') + '.';
+  return `Route ${route.id} · ${route.product} — ` + route.ops.map((o) => `${o.no} ${o.name} (${o.alternatives.length === 1 ? o.alternatives[0] : o.alternatives.length + ' eligible'}${o.assistants.length ? ' + assistant' : ''})`).join(' → ');
 }
 function makeCart() {
   const g = new THREE.Group();
@@ -568,74 +702,90 @@ function makeCart() {
   g.add(load); g.userData.load = load; g.scale.setScalar(1.45); return g;
 }
 const carts = []; let spawnClock = 3, spawnCount = 0;
+function release(p) { for (const id of p.busy) machines[id].active--; p.busy = []; }
 function stepRoute(dt) {
   laneMat.map.offset.x -= dt * 1.1;
-  if (stages.length < 3) return;
+  if (layers.length < 3) return;
   spawnClock += dt;
-  if (spawnClock > 4) {
+  if (spawnClock > 3.2) {
     spawnClock = 0; spawnCount++;
-    const stops = stages.map((s) => s[spawnCount % s.length]);
     const mesh = makeCart(); routeLayer.add(mesh);
-    carts.push({ mesh, stops, i: 0, phase: 'move', t: 0 });
+    carts.push({ mesh, n: spawnCount, stops: layers.map((l) => l[spawnCount % l.length]), i: 0, phase: 'move', t: 0, busy: [] });
   }
   for (let k = carts.length - 1; k >= 0; k--) {
     const p = carts[k];
     if (p.phase === 'move') {
-      const c = curveFor(p.stops[p.i], p.stops[p.i + 1]); p.t += (dt * 6.5) / Math.max(0.1, c.getLength());
-      const u = ease(Math.min(1, p.t)), tan = c.getTangentAt(Math.min(0.999, Math.max(0.001, u)));
+      const c = curveFor(p.stops[p.i], p.stops[p.i + 1]); p.t += (dt * 8) / Math.max(0.1, c.getLength());
+      const u = Math.min(1, p.t), tan = c.getTangentAt(Math.min(0.999, Math.max(0.001, u)));
       p.mesh.position.copy(c.getPointAt(u)); p.mesh.rotation.y = Math.atan2(-tan.z, tan.x);
-      if (p.t >= 1) { p.i++; if (p.i >= p.stops.length - 1) { routeLayer.remove(p.mesh); carts.splice(k, 1); continue; }
-        p.phase = 'dwell'; p.t = 0; p.mesh.userData.load.visible = false; machines[p.stops[p.i].key].active++; }
-    } else { p.t += dt; if (p.t >= (ROUTE.ops[p.i - 1]?.dwell ?? 3)) { machines[p.stops[p.i].key].active--; p.phase = 'move'; p.t = 0; p.mesh.userData.load.visible = true; } }
+      if (p.t >= 1) {
+        p.i++; p.t = 0;
+        if (p.i >= p.stops.length - 1) { routeLayer.remove(p.mesh); carts.splice(k, 1); continue; }
+        const stop = p.stops[p.i];
+        if (stop.machine) {
+          p.phase = 'dwell'; p.mesh.userData.load.visible = false; p.busy = [stop.machine];
+          for (const set of stop.op.assistants) { const id = set[p.n % set.length]; if (machines[id] && id !== stop.machine) p.busy.push(id); }
+          for (const id of p.busy) machines[id].active++;
+        }
+      }
+    } else { p.t += dt; if (p.t >= p.stops[p.i].op.dwell) { release(p); p.phase = 'move'; p.t = 0; p.mesh.userData.load.visible = true; } }
   }
 }
 function clearRoute() { for (const p of carts) routeLayer.remove(p.mesh); carts.length = 0; spawnClock = 3; }
 
-// ---------------------------------------------------------------- orders layer: replay of a schedule
+// ---------------------------------------------------------------- orders layer: replay of the ERP schedule
+// Each order is a marker that sits at the station of its current job and travels to the next one shortly
+// before that job starts. Orders appear when their first job is due and leave after their last one.
 const ordersLayer = new THREE.Group(); world.add(ordersLayer);
-const TRAVEL = 15;
 ORDERS.forEach((o, n) => {
-  o.jobs = o.jobs.filter((j) => machines[j[0]]);
+  o.jobs = o.jobs.filter((j) => machines[j[0]]); o.assists = o.assists.filter((j) => machines[j[0]]);
   const mat = std(o.colour, 0.35, 0.2, { emissive: o.colour, emissiveIntensity: 1.8 });
-  o.mesh = new THREE.Group();
+  o.mesh = new THREE.Group(); o.mesh.visible = false;
   o.gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.5), mat); o.gem.position.y = 1.5; o.gem.castShadow = true; o.mesh.add(o.gem);
   const halo = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 32), new THREE.MeshBasicMaterial({ color: new THREE.Color(o.colour).multiplyScalar(1.8), side: THREE.DoubleSide, transparent: true, opacity: 0.9 }));
   halo.rotation.x = -Math.PI / 2; halo.position.y = 0.05; o.mesh.add(halo);
   const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.2, 6), mat); beam.position.y = 0.6; o.mesh.add(beam);
   const l = label(o.id, 'order'); l.element.style.color = '#' + o.colour.toString(16).padStart(6, '0'); l.position.y = 2.4; o.mesh.add(l);
-  ordersLayer.add(o.mesh);
-  const slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, (Math.floor(n / 2) - 1) * 1.8 + 1);
-  const start = RAW.clone().add(slot), end = FIN.clone().add(new THREE.Vector3(-slot.x, 0, slot.z));
-  const stops = [start, ...o.jobs.map((j, k) => front(j[0]).add(new THREE.Vector3((n % 3 - 1) * 0.9, 0, 0))), end];
+  o.mesh.userData.info = { kind: 'Production order', title: `${o.id} · ${o.product ?? ''}`, small: true, rows: o.rows };
+  pickables.push(o.mesh); ordersLayer.add(o.mesh);
+  if (!o.jobs.length) return;
+  const slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
+  const stops = [RAW.clone().add(slot), ...o.jobs.map((j) => front(j[0])), FIN.clone().add(new THREE.Vector3(-slot.x, 0, slot.z))];
   o.curves = stops.slice(0, -1).map((s, i) => curve(s, stops[i + 1]));
 });
 function placeOrders(t) {
   for (const id in machines) machines[id].active = 0;
+  const waiting = {};
   for (const o of ORDERS) {
-    const jobs = o.jobs, last = jobs.length - 1; let pos;
-    if (!jobs.length) { o.mesh.visible = false; continue; }
-    if (t < jobs[0][1] - TRAVEL) pos = o.curves[0].getPoint(0);
-    else if (t >= jobs[last][2] + TRAVEL) pos = o.curves[last + 1].getPoint(1);
+    const jobs = o.jobs, last = jobs.length - 1;
+    if (!jobs.length) continue;
+    const busyUntil = (j) => Math.max(j[2], j[1] + MIN_BUSY), first = jobs[0][1], done = busyUntil(jobs[last]);
+    o.mesh.visible = t >= first - TRAVEL && t <= done + TRAVEL;
+    if (!o.mesh.visible) continue;
+    let pos;
+    if (t < first) pos = o.curves[0].getPoint(ease((t - (first - TRAVEL)) / TRAVEL));
+    else if (t >= done) pos = o.curves[last + 1].getPoint(ease((t - done) / TRAVEL));
     else {
-      for (let k = 0; k <= last; k++) {
-        const [res, s, e] = jobs[k], from = k === 0 ? s - TRAVEL : jobs[k - 1][2];
-        if (t >= from && t < s) { pos = o.curves[k].getPoint(ease((t - from) / (s - from))); break; }
-        if (t >= s && t < e) { pos = o.curves[k].getPoint(1); machines[res].active++; break; }
-      }
-      if (!pos) pos = o.curves[last + 1].getPoint(ease(Math.min(1, (t - jobs[last][2]) / TRAVEL)));
+      let k = 0; while (k < last && jobs[k + 1][1] <= t) k++;
+      const next = k < last ? jobs[k + 1][1] : Infinity;
+      const leave = k < last ? next - Math.min(TRAVEL, (next - jobs[k][1]) * 0.5) : Infinity;
+      if (t >= leave) pos = o.curves[k + 1].getPoint(ease((t - leave) / (next - leave)));
+      else { pos = o.curves[k].getPoint(1); (waiting[jobs[k][0]] ??= []).push(o); if (t <= busyUntil(jobs[k])) machines[jobs[k][0]].active++; }
     }
     o.mesh.position.copy(pos);
+    for (const a of o.assists) if (t >= a[1] && t <= busyUntil(a)) machines[a[0]].active++;
   }
+  for (const id in waiting) waiting[id].forEach((o, i, all) => { o.mesh.position.x += (i - (all.length - 1) / 2) * 1.5; o.mesh.position.z += (i % 2) * 0.9; });
 }
 
 // ---------------------------------------------------------------- modes and interface
 const hints = {
   structure: 'The floor is generated from the ERP hierarchy: production units contain resource groups, groups contain resources.',
-  orders: ORDERS.length + ' production orders replayed against their scheduled jobs. Drag the timeline or let it play.',
+  orders: ORDERS.length ? ORDERS.filter((o) => o.jobs.length).length + ' production orders replayed against their scheduled jobs. Markers are coloured by product. Drag the timeline or let it play.' : 'This snapshot has no production orders yet.',
 };
 let mode = 'route', minutes = 0, playing = true;
 const routeSel = document.getElementById('routeSel');
-for (const r of ROUTES) routeSel.add(new Option(`${r.id} · ${r.name ?? r.product}`, r.id));
+for (const r of ROUTES) routeSel.add(new Option(`${r.id} · ${r.product} · ${r.name ?? ''}`, r.id));
 routeSel.addEventListener('change', () => setMode('route'));
 const scrub = document.getElementById('scrub'), clock = document.getElementById('clock'), playBtn = document.getElementById('play');
 function setMode(next) {
@@ -661,7 +811,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(pointer, camera);
-  const hit = ray.intersectObjects(pickables, true)[0];
+  const hit = ray.intersectObjects(pickables.filter((p) => p.visible && p.parent.visible), true)[0];
   let o = hit?.object; while (o && !o.userData.info) o = o.parent;
   if (!o) { ring.visible = false; return; }
   const info = o.userData.info;
@@ -669,7 +819,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   document.getElementById('d-title').textContent = info.title;
   const body = document.getElementById('d-body'); body.replaceChildren();
   for (const [k, v] of info.rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
-  ring.position.set(o.position.x, LEVEL + 0.03, o.position.z); ring.scale.setScalar(info.kind === 'Resource' ? 1 : 0.22); ring.visible = true;
+  ring.position.set(o.position.x, LEVEL + 0.03, o.position.z); ring.scale.setScalar(info.small || info.kind === 'Secondary resource' ? 0.22 : 1); ring.visible = true;
 });
 
 function resize() {
@@ -677,7 +827,7 @@ function resize() {
   camera.aspect = w / h; camera.updateProjectionMatrix();
   renderer.setSize(w, h); composer.setSize(w, h); labelRenderer.setSize(w, h);
 }
-scrub.max = String(DAY);
+scrub.max = String(DAY); scrub.step = 'any';
 addEventListener('resize', resize); resize(); setMode('route');
 document.getElementById('loading').remove();
 
@@ -686,11 +836,10 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(timer.getDelta(), 0.05); elapsed += dt;
   if (mode === 'route') stepRoute(dt);
   if (mode === 'orders') {
-    if (playing) { minutes = (minutes + dt * (DAY / 48)) % DAY; scrub.value = String(Math.round(minutes)); }
+    if (playing) { minutes = (minutes + dt * (DAY / (DATED ? 180 : 48))) % DAY; scrub.value = String(minutes); }
     placeOrders(minutes);
     for (const o of ORDERS) { o.gem.rotation.y = elapsed * 1.5; o.gem.position.y = 1.5 + Math.sin(elapsed * 2 + o.colour) * 0.12; }
-    const total = DAY_START + Math.round(minutes);
-    clock.textContent = String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+    clock.textContent = clockLabel(minutes);
   }
   for (const id in machines) {
     const m = machines[id], on = m.active > 0;
