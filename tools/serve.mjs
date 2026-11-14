@@ -37,7 +37,7 @@ async function ordersStatus(dataset) {
 }
 
 /** The visuals file is the local presentation layer: which model stands for which resource. Never sent to the ERP. */
-const MODELS = new Set(['cnc', 'robot', 'pack', 'press', 'inspect', 'bench', 'vendor', 'tank']);
+const MODELS = new Set(['cnc', 'robot', 'pack', 'press', 'inspect', 'bench', 'vendor', 'tank', 'printer', 'paint', 'location']);
 function cleanVisuals(input) {
   if (!input || typeof input !== 'object') throw new Error('Expected an object.');
   const map = (value) => {

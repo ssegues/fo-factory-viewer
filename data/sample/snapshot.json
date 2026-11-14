@@ -20,22 +20,54 @@
     {
       "id": "3110",
       "name": "Cutting",
-      "productionUnitId": "PU-10"
+      "productionUnitId": "PU-10",
+      "input": {
+        "warehouseId": "11",
+        "locationId": "RM-01"
+      },
+      "output": {
+        "warehouseId": "12",
+        "locationId": "L10"
+      }
     },
     {
       "id": "3120",
       "name": "Finishing",
-      "productionUnitId": "PU-10"
+      "productionUnitId": "PU-10",
+      "input": {
+        "warehouseId": "12",
+        "locationId": "L10"
+      },
+      "output": {
+        "warehouseId": "12",
+        "locationId": "L20"
+      }
     },
     {
       "id": "1210",
       "name": "Assembly",
-      "productionUnitId": "PU-20"
+      "productionUnitId": "PU-20",
+      "input": {
+        "warehouseId": "12",
+        "locationId": "L20"
+      },
+      "output": {
+        "warehouseId": "12",
+        "locationId": "L30"
+      }
     },
     {
       "id": "5130",
       "name": "Packaging",
-      "productionUnitId": "PU-20"
+      "productionUnitId": "PU-20",
+      "input": {
+        "warehouseId": "12",
+        "locationId": "L30"
+      },
+      "output": {
+        "warehouseId": "13",
+        "locationId": "FG-01"
+      }
     }
   ],
   "resources": [

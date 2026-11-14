@@ -2,6 +2,12 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.5.0 — 2026-11-14
+
+- Three new models for the mapping panel: **3D printer**, **paint booth** and **floor location** (a marked bay on the floor, for a resource that is only a place).
+- Input and output locations of each resource group are imported from the Data management package and painted on the floor as IN and OUT bays showing warehouse and location. They are clickable and listed in the resource details.
+- Re-importing the structure keeps the production orders already merged into the snapshot.
+
 ## 0.4.0 — 2026-11-14
 
 - **Models** panel in the viewer: map ERP resources to the model shown for them, with rules by resource, resource group, resource type and capability, and a default. The most specific rule wins and each resource shows which rule decided.

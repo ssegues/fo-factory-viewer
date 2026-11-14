@@ -26,6 +26,8 @@ The structure (units, groups, resources, routes, BOMs) comes from a Data managem
 
 The ERP does not say what a resource looks like. **Models** in the header opens a panel that maps resources to models with rules; the most specific wins: resource, then resource group, resource type, capability, and a default. Changes show at once. For a real extract they are saved to `data/local/<folder>/visuals.json`; for the sample they last until the page is reloaded. This mapping is local and is never written to the ERP.
 
+Each resource group's input and output location, as set up in the ERP, is painted on the floor as an IN and an OUT bay.
+
 ## Views
 
 - **Floor** — the shop floor generated from the hierarchy: site → production unit → resource group → resource.

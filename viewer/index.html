@@ -306,6 +306,26 @@ const chevron = canvasTexture(128, 64, (g) => {
 const softDot = canvasTexture(64, 64, (g) => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); }, false);
 const belt = canvasTexture(64, 64, (g) => { g.fillStyle = '#15181d'; g.fillRect(0, 0, 64, 64); g.fillStyle = '#2b323b'; g.fillRect(0, 0, 64, 10); g.fillStyle = '#3dd6c6'; g.fillRect(4, 3, 8, 4); g.fillRect(52, 3, 8, 4); });
 const padGlow = canvasTexture(256, 256, (g) => { g.clearRect(0, 0, 256, 256); g.shadowColor = '#fff'; g.shadowBlur = 26; g.strokeStyle = '#fff'; g.lineWidth = 7; g.strokeRect(34, 34, 188, 188); g.strokeRect(34, 34, 188, 188); }, false);
+const bayMark = canvasTexture(288, 352, (g) => {
+  g.clearRect(0, 0, 288, 352); g.fillStyle = 'rgba(242,183,5,.07)'; g.fillRect(10, 10, 268, 332);
+  g.save(); g.beginPath(); g.rect(10, 10, 268, 332); g.clip(); g.strokeStyle = 'rgba(242,183,5,.16)'; g.lineWidth = 5;
+  for (let i = -352; i < 288; i += 30) { g.beginPath(); g.moveTo(i, 352); g.lineTo(i + 352, 0); g.stroke(); } g.restore();
+  g.strokeStyle = '#f2b705'; g.lineWidth = 8; g.setLineDash([26, 14]); g.strokeRect(10, 10, 268, 332); g.setLineDash([]);
+  g.lineWidth = 14; for (const [x, y, sx, sy] of [[10, 10, 1, 1], [278, 10, -1, 1], [10, 342, 1, -1], [278, 342, -1, -1]]) { g.beginPath(); g.moveTo(x + sx * 52, y); g.lineTo(x, y); g.lineTo(x, y + sy * 52); g.stroke(); }
+}, false);
+/** Painted floor bay for a group's input or output location. The text is what the ERP holds: warehouse and location. */
+function floorBay(kind, place) {
+  const colour = kind === 'IN' ? '#4cc9f0' : '#ffa23d';
+  const tex = canvasTexture(384, 224, (g) => {
+    g.clearRect(0, 0, 384, 224); g.fillStyle = kind === 'IN' ? 'rgba(76,201,240,.13)' : 'rgba(255,162,61,.13)'; g.fillRect(8, 8, 368, 208);
+    g.strokeStyle = colour; g.lineWidth = 9; g.strokeRect(8, 8, 368, 208); g.fillStyle = colour;
+    g.font = '800 96px "Segoe UI",sans-serif'; g.textBaseline = 'middle'; g.fillText(kind, 26, 84);
+    g.beginPath(); const x = 290, y = 80; if (kind === 'IN') { g.moveTo(x - 40, y - 34); g.lineTo(x + 40, y - 34); g.lineTo(x, y + 34); } else { g.moveTo(x - 40, y + 34); g.lineTo(x + 40, y + 34); g.lineTo(x, y - 34); } g.fill();
+    g.font = '600 44px Consolas,monospace'; g.fillText(`${place.warehouseId ?? '?'} / ${place.locationId ?? '?'}`.slice(0, 14), 26, 172);
+  }, false);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 1.7), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; return m;
+}
 function paintedText(text, height, colour = '#dfe7ee', opacity = 0.5) {
   const tex = canvasTexture(1024, 128, (g) => { g.font = '700 92px "Segoe UI",sans-serif'; g.textBaseline = 'middle'; g.fillStyle = colour; g.fillText(text.toUpperCase(), 8, 68); g.userData = g.measureText(text.toUpperCase()).width; }, false);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(height * 8, height), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity, depthWrite: false }));
@@ -656,7 +676,91 @@ function makeTank(statusMat) {
     liquid.material.emissiveIntensity = on ? 1.8 + Math.sin(p * 4) * 0.5 : 0.6;
   } };
 }
-const ARCHETYPES = { cnc: makeCnc, robot: makeRobot, pack: makePack, press: makePress, inspect: makeInspect, bench: makeBench, vendor: makeVendor, tank: makeTank };
+function makeLocation(statusMat) {
+  // A resource that is only a place: a marked bay on the floor. A pallet stands on it while work is there.
+  const g = new THREE.Group(); g.scale.setScalar(SCALE);
+  const mark = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 4.4), new THREE.MeshBasicMaterial({ map: bayMark, transparent: true, depthWrite: false })); mark.rotation.x = -Math.PI / 2; mark.position.y = 0.015; g.add(mark);
+  g.add(cyl(0.05, 0.05, 1.5, M.graphite, 1.6, 0.75, -2.0, 8)); g.add(box(0.24, 0.1, 0.24, M.yellow, 1.6, 0.05, -2.0, 0.02)); g.add(box(0.6, 0.34, 0.05, M.yellow, 1.6, 1.3, -2.0, 0.02));
+  g.add(cyl(0.1, 0.1, 0.12, statusMat, 1.6, 1.6, -2.0, 14));
+  const load = new THREE.Group(); pallet(load, -0.75, -0.5, 2); pallet(load, 0.85, 0.2, 1); pallet(load, -0.6, 1.25, 1); g.add(load);
+  let k = 0;
+  return { group: g, height: 1.7 * SCALE, depth: 4.4 * SCALE, update(dt, on) { k += ((on ? 1 : 0) - k) * Math.min(1, dt * 4); load.visible = k > 0.03; load.scale.set(1, Math.max(0.001, k), 1); } };
+}
+function makePrinter(statusMat) {
+  // Enclosed additive cell: the bed descends as the part grows under a moving print head.
+  const g = new THREE.Group(); g.scale.setScalar(SCALE); plinth(g);
+  const Z = -0.4, H = 1.1;
+  g.add(box(2.6, 0.55, 2.6, M.graphite, 0, 0.62, Z, 0.06)); g.add(box(2.64, 0.07, 2.64, M.orange, 0, 0.92, Z, 0.01));
+  for (const x of [-1.22, 1.22]) for (const z of [-1.22, 1.22]) g.add(box(0.14, 2.3, 0.14, M.graphite, x, 2.07, Z + z, 0.03));
+  g.add(box(2.6, 0.34, 2.6, M.graphite, 0, 3.36, Z, 0.07)); g.add(box(2.64, 0.06, 2.64, M.orange, 0, 3.2, Z, 0.01));
+  for (const x of [-1.22, 1.22]) g.add(pane(2.3, 2.26, x, 2.07, Z, Math.PI / 2)); g.add(pane(2.3, 2.26, 0, 2.07, Z - 1.22));
+  const light = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.03, 0.12), glow(0xdfeaff, 2)); light.position.set(0, 3.17, Z + 1.0); g.add(light);
+  for (const x of [-1.0, 1.0]) g.add(cyl(0.035, 0.035, 2.25, M.chrome, x, 2.07, Z - 1.0, 10));
+  const bed = new THREE.Group(); g.add(bed);
+  bed.add(box(1.9, 0.07, 1.9, M.steel, 0, 0, Z, 0.02)); bed.add(box(2.2, 0.1, 0.16, M.graphite, 0, -0.08, Z - 1.0, 0.02));
+  const hot = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.012, 1.7), glow(0xff7a3d, 0)); hot.position.set(0, 0.042, Z); bed.add(hot);
+  const partMat = std(0x1fb5a8, 0.45, 0.1, { emissive: 0x1fb5a8, emissiveIntensity: 0.15 });
+  const geo = new THREE.CylinderGeometry(0.34, 0.52, H, 6, 1); geo.translate(0, H / 2, 0);
+  const part = new THREE.Mesh(geo, partMat); part.position.set(0, 0.045, Z); part.castShadow = true; bed.add(part);
+  const gantry = new THREE.Group(); gantry.position.y = 2.95; g.add(gantry);
+  gantry.add(tube(0.04, 2.3, M.chrome, 0, 0, 0, 'x', 10)); gantry.add(tube(0.04, 2.3, M.chrome, 0, 0.14, 0, 'x', 10));
+  for (const x of [-1.12, 1.12]) g.add(tube(0.04, 2.3, M.chrome, x, 3.02, Z, 'z', 10));
+  const head = new THREE.Group(); gantry.add(head);
+  head.add(box(0.34, 0.36, 0.3, M.orange, 0, 0, 0, 0.05)); head.add(cyl(0.1, 0.02, 0.2, M.steel, 0, -0.27, 0, 12));
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), glow(0xffb347, 0)); tip.position.y = -0.37; head.add(tip);
+  const spools = [[1.42, 2.55, M.orange], [1.42, 1.75, M.teal]].map(([x, y, mat]) => { const s = new THREE.Group(); s.position.set(x, y, Z);
+    const t = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.12, 10, 24), mat); t.rotation.y = Math.PI / 2; t.castShadow = true; s.add(t); s.add(tube(0.1, 0.3, M.dark, 0, 0, 0, 'x', 12)); s.add(box(0.05, 0.5, 0.06, M.steel, 0, 0, 0, 0.01)); g.add(s); return s; });
+  g.add(hose([[1.42, 2.83, Z], [1.3, 3.5, Z], [0.6, 3.62, Z], [0.2, 3.55, Z]], 0.02, M.orange));
+  console_(g, 1.2, 1.75); g.add(cyl(0.1, 0.1, 0.12, statusMat, -1.1, 3.6, Z + 1.1, 14));
+  const lamp = new THREE.PointLight(0xdfeaff, 0, 5, 2); lamp.position.set(0, 3.0, Z); g.add(lamp);
+  let p = 0;
+  return { group: g, height: 3.7 * SCALE, depth: 4.35 * SCALE, update(dt, on) {
+    if (on) p += dt;
+    const c = (p / 16) % 1, grow = Math.min(1, c / 0.88), shown = c < 0.97;
+    part.visible = shown && grow > 0.005; part.scale.y = Math.max(0.005, grow);
+    bed.position.y = 2.95 - 0.37 - 0.05 - (shown ? grow : 0) * H;
+    const r = 0.5 - grow * 0.14; head.position.x = Math.cos(p * 5.5) * r; gantry.position.z = Z + Math.sin(p * 5.5) * r;
+    tip.material.emissiveIntensity = on ? 8 : 0; hot.material.emissiveIntensity = on ? 1.4 : 0; light.material.emissiveIntensity = on ? 3.2 : 1; lamp.intensity = on ? 4 : 0;
+    partMat.emissiveIntensity = on ? 0.35 : 0.1; if (on) for (const s of spools) s.rotation.x += dt * 1.6;
+  } };
+}
+const PAINTS = [0xc8372d, 0x1f8f86, 0xf2b705, 0x6d5bd0];
+function makePaint(statusMat) {
+  // Spray booth: a part hangs from a rail and turns while a reciprocating gun coats it; extraction on the roof.
+  const g = new THREE.Group(); g.scale.setScalar(SCALE); plinth(g);
+  g.add(box(3.1, 2.6, 0.12, M.white, 0, 1.66, -1.95, 0.03)); for (let k = 0; k < 9; k++) g.add(box(2.6, 0.07, 0.04, M.graphite, 0, 0.75 + k * 0.22, -1.87, 0.01));
+  for (const x of [-1.5, 1.5]) { g.add(box(0.12, 2.6, 2.7, M.white, x, 1.66, -0.6, 0.03)); g.add(box(0.14, 0.5, 2.72, M.red, x, 0.62, -0.6, 0.01)); g.add(pane(1.5, 0.9, x + Math.sign(x) * 0.07, 2.0, -0.4, Math.PI / 2)); }
+  for (const z of [-1.95, 0.75]) g.add(box(3.12, 0.14, 0.14, M.white, 0, 3.0, z, 0.03)); for (const x of [-1.5, 1.5]) g.add(box(0.14, 0.14, 2.82, M.white, x, 3.0, -0.6, 0.03));
+  const roof = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 2.6), glassMat); roof.rotation.x = -Math.PI / 2; roof.position.set(0, 3.02, -0.6); g.add(roof);
+  g.add(box(3.16, 0.16, 0.08, M.red, 0, 3.0, 0.8, 0.02));
+  const bars = [-1.36, 1.36].map((x) => { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 2.2), glow(0xf4f8ff, 2)); b.position.set(x, 2.8, -0.6); g.add(b); return b; });
+  g.add(cyl(0.42, 0.42, 0.8, M.steel, 0, 3.45, -1.2, 20)); g.add(cyl(0.48, 0.48, 0.08, M.graphite, 0, 3.86, -1.2, 20));
+  const fan = new THREE.Group(); fan.position.set(0, 3.92, -1.2); for (let b = 0; b < 4; b++) { const piv = new THREE.Group(); piv.rotation.y = (b * Math.PI) / 2; piv.add(box(0.36, 0.02, 0.14, M.dark, 0.2, 0, 0, 0.005)); fan.add(piv); } g.add(fan);
+  g.add(box(0.08, 0.08, 2.5, M.graphite, 0, 2.8, -0.6, 0.01));
+  const hang = new THREE.Group(); hang.position.set(0, 2.76, -0.75); g.add(hang);
+  hang.add(cyl(0.015, 0.015, 0.5, M.steel, 0, -0.25, 0, 6));
+  const coat = std(0x8d939b, 0.6, 0.1);
+  hang.add(box(0.75, 0.95, 0.42, coat, 0, -0.98, 0, 0.05)); for (const y of [-0.75, -1.2]) { const c = cyl(0.14, 0.14, 0.03, M.dark, 0, y, 0.22, 18); c.rotation.x = Math.PI / 2; hang.add(c); }
+  g.add(cyl(0.05, 0.05, 2.0, M.chrome, 1.05, 1.4, -0.15, 12)); g.add(box(0.36, 0.14, 0.36, M.graphite, 1.05, 0.42, -0.15, 0.03));
+  const gun = new THREE.Group(); gun.position.set(1.05, 1.7, -0.15); g.add(gun);
+  gun.add(box(0.2, 0.22, 0.2, M.graphite, 0, 0, 0, 0.03)); const barrelArm = box(0.5, 0.09, 0.09, M.orange, -0.3, 0, -0.18, 0.02); barrelArm.rotation.y = -0.75; gun.add(barrelArm);
+  const mistMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+  const mist = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.75, 16, 1, true), mistMat); mist.rotation.set(0, -0.75, -Math.PI / 2); mist.position.set(-0.72, 0, -0.5); gun.add(mist);
+  const cloud = puffs(g, { x: 0.15, y: 1.75, z: -0.72, n: 14, colour: 0xffffff, size: 0.55, speed: 0.3, life: 1.3, gravity: -0.4, soft: true });
+  const drums = new THREE.Group(); drums.position.y = 0.35; barrel(drums, -1.15, 1.55, M.red); barrel(drums, -0.25, 1.7, M.yellow); g.add(drums);
+  g.add(hose([[-1.15, 1.45, 1.55], [-0.2, 1.9, 1.2], [0.8, 1.2, 0.5], [1.05, 0.6, -0.1]], 0.03, M.dark));
+  console_(g, 1.25, 1.8); g.add(cyl(0.1, 0.1, 0.12, statusMat, 1.4, 3.15, 0.75, 14));
+  const from = new THREE.Color(0x8d939b), to = new THREE.Color(); let p = 0, spin = 0;
+  return { group: g, height: 4.0 * SCALE, depth: 4.35 * SCALE, update(dt, on) {
+    if (on) p += dt; spin += ((on ? 9 : 0) - spin) * Math.min(1, dt * 1.5); fan.rotation.y += spin * dt;
+    const lap = Math.floor(p / 9), c = (p / 9) % 1, spraying = on && c < 0.8; to.setHex(PAINTS[lap % PAINTS.length]);
+    coat.color.copy(from).lerp(to, Math.min(1, c / 0.75)); coat.roughness = 0.6 - Math.min(1, c / 0.8) * 0.35;
+    hang.rotation.y = p * 0.9; gun.position.y = 1.7 + Math.sin(p * 1.7) * 0.42;
+    mistMat.color.copy(to); mistMat.opacity = spraying ? 0.22 + Math.random() * 0.08 : 0; cloud(dt, spraying);
+    for (const b of bars) b.material.emissiveIntensity = on ? 3.4 : 1;
+  } };
+}
+const ARCHETYPES = { cnc: makeCnc, robot: makeRobot, pack: makePack, press: makePress, inspect: makeInspect, bench: makeBench, vendor: makeVendor, tank: makeTank, printer: makePrinter, paint: makePaint, location: makeLocation };
 
 // Jointed figure: hips, legs, torso, head, shoulders and elbows. `poseWorker` drives it every frame.
 function makeWorker(tablet = false) {
@@ -709,8 +813,9 @@ for (const unit of SITE.units) {
   const shelves = [];
   for (const group of unit.groups) {
     const rows = Math.ceil(group.resources.length / PER_ROW);
-    group.w = Math.min(PER_ROW, group.resources.length) * CELL + 1.6; group.d = (rows - 1) * ROW + CELL + 2.4;
-    if (!group.resources.length) { group.w = 8.5; group.d = 5.2; }
+    group.bay = group.input || group.output ? 2.3 : 0;          // a strip at the back for the painted input/output bays
+    group.w = Math.min(PER_ROW, group.resources.length) * CELL + 1.6; group.d = (rows - 1) * ROW + CELL + 2.4 + group.bay;
+    if (!group.resources.length) { group.w = 8.5; group.d = 5.2 + group.bay; }
     let shelf = shelves[shelves.length - 1];
     if (!shelf || shelf.w + AISLE + group.w > UNIT_MAX) { shelf = { w: 0, d: 0, groups: [] }; shelves.push(shelf); }
     group.offset = shelf.groups.length ? shelf.w + AISLE : 0; shelf.w = group.offset + group.w; shelf.d = Math.max(shelf.d, group.d); shelf.groups.push(group);
@@ -740,8 +845,16 @@ for (const unit of SITE.units) {
       border(world, group.w, group.d, gx, LEVEL + 0.005, gz);
       const gt = paintedText(`${group.id}  ${group.name}`, 0.8, '#7ff0e3', 0.8); gt.position.set(gx - group.w / 2 + 0.6, LEVEL + 0.01, gz + group.d / 2 - 0.75); world.add(gt);
       groupsById[group.id] = { group, unit, mat: gs.material, x: gx, z: gz };
+      [['IN', group.input, gx - group.w / 2 + 2.0], ['OUT', group.output, gx + group.w / 2 - (group.resources.length ? 3.4 : 2.0)]].forEach(([kind, place, x]) => {
+        if (!place) return;
+        const bay = floorBay(kind, place); bay.position.set(x, LEVEL + 0.012, gz - group.d / 2 + 1.25); world.add(bay);
+        bay.userData.info = { kind: kind === 'IN' ? 'Input location' : 'Output location', small: true, title: `${place.warehouseId ?? '—'} / ${place.locationId ?? '—'}`, rows: [
+          ['Resource group', `${group.id} ${group.name}`], ['Warehouse', place.warehouseId ?? '—'], ['Location', place.locationId ?? '—'],
+          ['Role', kind === 'IN' ? 'Components are delivered here' : 'Output leaves from here'], ['Source', 'Resource group setup in the ERP'] ] };
+        pickables.push(bay);
+      });
       group.resources.forEach((res, i) => {
-        const x = gx - group.w / 2 + 0.8 + CELL / 2 + (i % PER_ROW) * CELL, z = gz - group.d / 2 + 0.2 + CELL / 2 + Math.floor(i / PER_ROW) * ROW;
+        const x = gx - group.w / 2 + 0.8 + CELL / 2 + (i % PER_ROW) * CELL, z = gz - group.d / 2 + 0.2 + group.bay + CELL / 2 + Math.floor(i / PER_ROW) * ROW;
         const statusMat = glow(0x5b7a99, 1.2);
         const built = (ARCHETYPES[res.model] ?? ARCHETYPES.press)(statusMat, res);
         const holder = new THREE.Group(); holder.position.set(x, LEVEL, z); holder.add(built.group); world.add(holder);
@@ -750,7 +863,7 @@ for (const unit of SITE.units) {
         const onRoutes = ROUTES.filter((r) => r.ops.some((o) => o.alternatives.includes(res.id) || o.assistants.some((s) => s.includes(res.id))));
         holder.userData.info = { kind: KIND[res.type] ?? res.type, title: `${res.id} · ${res.name}`, rows: [
           ['Resource type', res.type], ['Group', `${group.id} ${group.name}`], ['Production unit', unit.name],
-          ['Capabilities', (res.capabilities ?? []).join(', ') || '—'], ['Efficiency', res.efficiency == null ? '—' : res.efficiency + '%'], ['Calendar', res.calendarId ?? '—'],
+          ['Capabilities', (res.capabilities ?? []).join(', ') || '—'], ['Input location', group.input ? `${group.input.warehouseId} / ${group.input.locationId}` : '—'], ['Output location', group.output ? `${group.output.warehouseId} / ${group.output.locationId}` : '—'], ['Efficiency', res.efficiency == null ? '—' : res.efficiency + '%'], ['Calendar', res.calendarId ?? '—'],
           ['Eligible on', onRoutes.length ? `${onRoutes.length} route${onRoutes.length > 1 ? 's' : ''}` : '—'] ] };
         const under = new THREE.Mesh(new THREE.PlaneGeometry(6.4, built.depth + 2.2), new THREE.MeshBasicMaterial({ map: padGlow, color: new THREE.Color(0x3ddc84).multiplyScalar(1.6), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
         under.rotation.x = -Math.PI / 2; under.position.y = 0.03; under.raycast = () => {}; holder.add(under);
@@ -1092,8 +1205,8 @@ playBtn.addEventListener('click', () => { playing = !playing; playBtn.textConten
 scrub.addEventListener('input', () => { minutes = Number(scrub.value); });
 
 // ---------------------------------------------------------------- resource model mapping (local layer)
-const MODEL_NAMES = { cnc: 'CNC machining centre', robot: 'Robot cell', pack: 'Packaging line', press: 'Stamping press', inspect: 'Inspection cell', tank: 'Coating tank', bench: 'Manual workbench', vendor: 'Subcontractor' };
-const HINTS = [[/press|stamp|punch/i, 'press'], [/cnc|mill|lathe|drill|machin|cut/i, 'cnc'], [/robot|weld|assembl/i, 'robot'], [/pack|wrap|box/i, 'pack'], [/test|inspect|quality|\bqc\b|measur/i, 'inspect'], [/coat|paint|tank|bath|plating/i, 'tank']];
+const MODEL_NAMES = { cnc: 'CNC machining centre', robot: 'Robot cell', pack: 'Packaging line', press: 'Stamping press', inspect: 'Inspection cell', tank: 'Coating tank', paint: 'Paint booth', printer: '3D printer', bench: 'Manual workbench', vendor: 'Subcontractor', location: 'Floor location' };
+const HINTS = [[/press|stamp|punch/i, 'press'], [/cnc|mill|lathe|drill|machin|cut/i, 'cnc'], [/robot|weld|assembl/i, 'robot'], [/pack|wrap|box/i, 'pack'], [/test|inspect|quality|\bqc\b|measur/i, 'inspect'], [/paint|spray|lacquer/i, 'paint'], [/coat|tank|bath|plating/i, 'tank'], [/3d|print|additive/i, 'printer']];
 const mapPanel = document.getElementById('mapPanel'), mapBtn = document.getElementById('mapBtn'), mapState = document.getElementById('mapState');
 const canSave = dataset.startsWith('local/');
 function swapModel(id) {
