@@ -32,6 +32,8 @@ Each resource group's input and output location, as set up in the ERP, is painte
 
 When the data folder holds a `warehouses.json`, the header shows **Factory** and **Warehouse**. The warehouse page lays out one warehouse from its ERP structure (location type, zone, aisle, rack, shelf, bin). It is a proof of concept: forklift trips join real locations of the right type but are not real warehouse work, and the box fill is decorative because stock by location is not read. Build the file with `node tools/import-warehouse.mjs <package-folder> data/local/<folder>`.
 
+Warehouses with warehouse work open in the **Warehouse work** view: the work orders from the ERP are listed and replayed by a forklift, line by line, at their real locations. Add them with `node tools/import-warehouse-work.mjs <package-folder> data/local/<folder>` after importing the structure, or read them from the ERP with **Refresh work** on the warehouse page (`node tools/extract-warehouse-work.mjs data/local/<folder>`, GET only).
+
 ## Material flow
 
 Violet lanes and crates show components reaching the resources. The source is the warehouse and location on the BOM line; a line flagged for resource consumption uses the input location of the resource's group; a line with no operation number is consumed at the first operation. In the Orders view the order's own BOM lines are used, falling back to the product's BOM when the order has none. Timing is a viewer convention: the crate arrives as the job starts.
@@ -55,6 +57,7 @@ Workers are shown only as secondary resources, standing next to the machine they
 | `tools/serve.mjs` | Local server: static files, the order refresh and saving the model mapping |
 | `tools/import-dmf.mjs` | Builds a snapshot from a Data management package |
 | `tools/import-warehouse.mjs` | Builds `warehouses.json` from a warehouse Data management package |
+| `tools/import-warehouse-work.mjs`, `tools/extract-warehouse-work.mjs` | Warehouse work into `warehouses.json`, from a package or from OData |
 | `tools/extract-orders.mjs`, `tools/fo-client.mjs` | GET-only OData read of orders and jobs |
 
 ## Versions

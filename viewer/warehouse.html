@@ -18,9 +18,12 @@
   #version { font-size:10px; font-weight:400; color:var(--dim); letter-spacing:.8px; margin-left:4px; }
   .nav { display:flex; } .nav a { color:var(--dim); text-decoration:none; border:1px solid rgba(140,170,190,.3); padding:10px 20px; font-size:14px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
   .nav a.on { background:rgba(61,214,198,.2); color:var(--accent); border-color:var(--accent); box-shadow:0 0 16px rgba(61,214,198,.3) inset; }
-  .seg { display:flex; gap:6px; }
+  .seg { display:flex; gap:6px; flex-wrap:wrap; }
   .seg button { background:rgba(255,255,255,.03); color:var(--dim); border:1px solid rgba(140,170,190,.25); padding:7px 12px; font:inherit; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; cursor:pointer; }
   .seg button.on { background:rgba(61,214,198,.18); color:var(--accent); border-color:var(--accent); box-shadow:0 0 14px rgba(61,214,198,.25) inset; }
+  #refreshWork { background:rgba(61,214,198,.12); color:var(--accent); border:1px solid var(--line); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; text-align:left; line-height:1.35; }
+  #refreshWork small { display:block; color:var(--dim); font-size:10px; letter-spacing:.6px; text-transform:none; }
+  #refreshWork:disabled { cursor:progress; opacity:.7; } #refreshWork.failed { color:var(--warm); border-color:rgba(255,162,61,.6); }
   #whSel { background:#0b1118; color:var(--accent); border:1px solid var(--line); padding:7px 8px; font-size:12px; }
   #hint { bottom:62px; left:16px; padding:9px 14px; color:var(--dim); font-size:13px; max-width:560px; }
   #detail { top:16px; right:16px; width:290px; padding:14px 16px 16px; }
@@ -28,6 +31,14 @@
   #detail h2 { margin:2px 0 10px; font-size:18px; font-weight:600; }
   #detail dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:13px; }
   #detail dt { color:var(--dim); } #detail dd { margin:0; text-align:right; }
+  #workPanel { top:150px; left:16px; width:330px; max-height:calc(100vh - 330px); padding:12px 14px; display:flex; flex-direction:column; gap:6px; }
+  #workPanel[hidden] { display:none; }
+  #workPanel .k { color:var(--accent); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
+  #workList { overflow:auto; display:flex; flex-direction:column; gap:4px; }
+  #workList .work { display:grid; grid-template-columns:1fr auto; gap:1px 8px; text-align:left; background:rgba(255,255,255,.03); border:1px solid rgba(140,170,190,.18); color:var(--text); padding:6px 8px; cursor:pointer; font:inherit; font-size:12px; }
+  #workList .work.on { border-color:var(--accent); background:rgba(61,214,198,.12); }
+  #workList .work b { font-weight:600; font-family:Consolas,monospace; } #workList .work span { font-size:11px; text-transform:uppercase; letter-spacing:.8px; }
+  #workList .work small { grid-column:1 / -1; color:var(--dim); }
   #legend { bottom:18px; left:16px; padding:8px 14px; font-size:12px; color:var(--dim); display:flex; gap:14px; flex-wrap:wrap; max-width:70vw; }
   #legend i { display:inline-block; width:8px; height:8px; margin-right:6px; }
   .lbl { white-space:nowrap; font-family:Consolas,"Cascadia Mono",ui-monospace,monospace; font-size:11px; letter-spacing:.6px; background:rgba(7,11,16,.82); border:1px solid var(--line); border-left:3px solid var(--accent); padding:1px 7px; color:var(--text); }
@@ -52,15 +63,20 @@
   <div class="nav"><a id="navFactory" href="./">Factory</a><a class="on">Warehouse</a></div>
   <select id="whSel" class="mono" aria-label="Warehouse"></select>
   <div class="seg" id="flows"></div>
+  <button id="refreshWork" class="mono" hidden></button>
 </div>
 <div id="hint" class="hud"></div>
-<div id="demo" class="mono">Proof of concept · structure from the ERP, movement illustrative</div>
+<div id="demo" class="mono">Proof of concept · structure and warehouse work from the ERP</div>
 <div id="detail" class="hud">
   <div class="k mono" id="d-kind">Selection</div>
   <h2 id="d-title">Click a location</h2>
   <dl id="d-body"><dt>Tip</dt><dd>Drag to orbit, scroll to zoom</dd></dl>
 </div>
 <div id="legend" class="hud mono"></div>
+<div id="workPanel" class="hud" hidden>
+  <div class="k mono" id="workSource">Warehouse work · from the ERP</div>
+  <div id="workList"></div>
+</div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -85,7 +101,7 @@ fetch('../package.json').then((r) => r.ok ? r.json() : null).catch(() => null).t
 const DATA = await fetch(`../data/${dataset}/warehouses.json`).then((r) => r.ok ? r.json() : null).catch(() => null);
 if (!DATA) { document.getElementById('loading').textContent = `No warehouses.json in data/${dataset}`; throw new Error('Warehouse data missing'); }
 const whSel = document.getElementById('whSel');
-for (const w of [...DATA.warehouses].sort((a, b) => b.locations.length - a.locations.length)) whSel.add(new Option(`${w.id} · ${w.locations.length} location${w.locations.length === 1 ? '' : 's'}`, w.id));
+for (const w of [...DATA.warehouses].sort((a, b) => b.locations.length - a.locations.length)) whSel.add(new Option(`${w.id} · ${w.locations.length} location${w.locations.length === 1 ? '' : 's'}${w.work?.length ? ` · ${w.work.length} work` : ''}`, w.id));
 const WH = DATA.warehouses.find((w) => w.id === params.get('wh')) ?? DATA.warehouses.find((w) => w.id === whSel.options[0].value);
 whSel.value = WH.id;
 whSel.addEventListener('change', () => { const u = new URL(location.href); u.searchParams.set('wh', whSel.value); location.href = u.toString(); });
@@ -318,9 +334,11 @@ function newTrip(t, first) {
 function setFlow(id) {
   flow = FLOWS.find((f) => f.id === id) ?? null;
   for (const t of trucks) { flowLayer.remove(t.mesh, t.src, t.dst); if (t.lane) flowLayer.remove(t.lane); } trucks.length = 0;
-  document.querySelectorAll('#flows button').forEach((b) => b.classList.toggle('on', b.dataset.flow === (flow?.id ?? 'structure')));
+  stopWork(); const active = flow?.id ?? (id === 'work' && WORK.length ? 'work' : 'structure');
+  document.querySelectorAll('#flows button').forEach((b) => b.classList.toggle('on', b.dataset.flow === active));
   document.getElementById('hint').textContent = flow ? flow.text + ' Trips are illustrative: they join real locations of the right type, but are not real warehouse work.'
     : `Laid out from the ERP structure: ${physical.length} locations by type, aisle, rack and shelf.` + (skipped ? ` ${skipped} non-physical location${skipped === 1 ? '' : 's'} (user, dummy) left out.` : '') + ' Box fill is decorative: stock by location is not read.';
+  if (active === 'work') { startWork(); return; }
   if (!flow) return;
   const n = Math.min(4, Math.max(2, Math.round(physical.length / 150)));
   for (let i = 0; i < n; i++) { const t = { mesh: makeForklift(), src: marker(0x4cc9f0), dst: marker(0xffa23d) }; flowLayer.add(t.mesh, t.src, t.dst); trucks.push(t); newTrip(t, true); t.t = -i * 1.3; }
@@ -347,9 +365,101 @@ function stepFlow(dt) {
   }
 }
 
+// ---------------------------------------------------------------- real warehouse work
+// Work orders as the ERP holds them: a forklift follows each work's lines in order, picking at Pick lines
+// and putting at Put lines. The order of lines, locations, items and quantities are real; speed is not.
+const WORK = (WH.work ?? []).filter((w) => w.lines.some((l) => l.located && place[l.locationId]));
+const STATUS_COLOUR = { Open: '#4cc9f0', InProcess: '#ffd166', Closed: '#3ddc84', Cancelled: '#8497a8' };
+const workLayer = new THREE.Group(); hall.add(workLayer);
+let workTruck = null, workIndex = 0, workAuto = true;
+function setDetail(kind, title, rows) {
+  document.getElementById('d-kind').textContent = kind; document.getElementById('d-title').textContent = title;
+  const body = document.getElementById('d-body'); body.replaceChildren();
+  for (const [k, v] of rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
+}
+const qty = (l) => `${l.itemNumber ?? 'mixed'} × ${l.quantity ?? '—'}${l.unit ? ' ' + l.unit : ''}`;
+function drawWorkList() {
+  const list = document.getElementById('workList'); list.replaceChildren();
+  WORK.forEach((w, i) => {
+    const row = document.createElement('button'); row.className = 'work' + (i === workIndex ? ' on' : '');
+    const unplaced = w.lines.filter((l) => !l.located).length;
+    const top = document.createElement('b'); top.textContent = `${w.id} · ${w.orderType}`;
+    const status = document.createElement('span'); status.textContent = w.status; status.style.color = STATUS_COLOUR[w.status] ?? 'var(--dim)';
+    const sub = document.createElement('small'); sub.textContent = `${w.sourceOrder ? 'Order ' + w.sourceOrder + ' · ' : ''}${w.lines.length} line${w.lines.length === 1 ? '' : 's'}${unplaced ? ` · ${unplaced} without location` : ''}`;
+    row.append(top, status, sub); row.addEventListener('click', () => { workAuto = false; startWorkOrder(i); }); list.append(row);
+  });
+}
+function startWorkOrder(i) {
+  workIndex = (i + WORK.length) % WORK.length; const w = WORK[workIndex], t = workTruck;
+  for (const c of [...workLayer.children]) { if (c !== t.mesh) { workLayer.remove(c); c.geometry?.dispose(); } }
+  t.stops = w.lines.filter((l) => l.located && place[l.locationId]).map((l) => ({ line: l, entry: place[l.locationId] }));
+  t.stops.forEach((s, k) => {
+    const m = marker(s.line.type === 'Pick' ? 0x4cc9f0 : 0xffa23d); m.position.copy(s.entry.access).setY(0.06 + k * 0.002); workLayer.add(m);
+    if (k) workLayer.add(ribbon(pathBetween(t.stops[k - 1].entry.access, s.entry.access)));
+  });
+  t.k = 0; t.carry = 0; t.d = 0; t.t = 0; t.phase = 'drive'; t.path = pathBetween(t.mesh.position.clone().setY(0), t.stops[0].entry.access);
+  setDetail('Warehouse work', w.id, [['Order type', w.orderType], ['Status', w.status], ['Source order', w.sourceOrder ?? '—'], ['Wave', w.waveId ?? '—'],
+    ['Closed', (w.closed ?? '—').replace('T', ' ')], ['Cancelled', (w.cancelled ?? '—').replace('T', ' ')],
+    ...w.lines.map((l) => [`${l.line}. ${l.type}`, `${l.locationId ?? 'no location'}${l.located ? '' : ' (not placed)'} · ${qty(l)}`])]);
+  drawWorkList(); document.querySelector('#workList .on')?.scrollIntoView({ block: 'nearest' });
+}
+function startWork() {
+  workTruck = { mesh: makeForklift() }; workLayer.add(workTruck.mesh);
+  workTruck.mesh.position.copy(WORK[0].lines.map((l) => place[l.locationId]).find(Boolean).access);
+  document.getElementById('workPanel').hidden = false; workAuto = true; placeWorkPanel();
+  if (DATA.meta.work?.source === 'sample') document.getElementById('workSource').textContent = 'Warehouse work · sample data'; startWorkOrder(workIndex);
+  const statuses = [...new Set(WORK.map((w) => w.status))].join(', ');
+  document.getElementById('hint').textContent = `${DATA.meta.work?.source === 'sample' ? 'Sample warehouse work (invented)' : 'Real warehouse work from the ERP'}: ${WORK.length} work order${WORK.length === 1 ? '' : 's'} in warehouse ${WH.id} (${statuses}). The forklift follows each work's pick and put lines in order; work is replayed as recorded, whatever its status. Speed and timing are illustrative. Click a work order to replay it.`;
+}
+function stopWork() {
+  for (const c of [...workLayer.children]) { workLayer.remove(c); c.geometry?.dispose(); }
+  workTruck = null; document.getElementById('workPanel').hidden = true;
+}
+function stepWork(dt) {
+  const t = workTruck, { fork, load, beacon } = t.mesh.userData;
+  laneMat.map.offset.x -= dt * 1.1; beacon.material.emissiveIntensity = Math.sin(performance.now() / 140) > 0 ? 5 : 0.8;
+  load.visible = t.carry > 0; load.scale.y = 1 + Math.min(3, t.carry - 1) * 0.45;
+  if (t.phase === 'drive') {
+    t.d += dt * 6.5; const p = along(t.path, Math.min(t.d, t.path.total)); t.mesh.position.copy(p.pos);
+    let turn = p.heading - t.mesh.rotation.y; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); t.mesh.rotation.y += turn * Math.min(1, dt * 7);
+    fork.position.y += (0.5 - fork.position.y) * Math.min(1, dt * 4);
+    if (t.d >= t.path.total) { t.phase = 'act'; t.t = 0; }
+  } else if (t.phase === 'act') {
+    t.t += dt; const stop = t.stops[t.k], end = stop.entry, u = Math.min(1, t.t / 1.6);
+    const face = Math.atan2(-(end.pos.z - end.access.z), end.pos.x - end.access.x); let turn = face - t.mesh.rotation.y; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); t.mesh.rotation.y += turn * Math.min(1, dt * 6);
+    fork.position.y = 0.2 + Math.sin(u * Math.PI) * end.pos.y;
+    if (u >= 1) {
+      if (stop.line.type === 'Pick') t.carry++; else t.carry = 0;
+      t.k++;
+      if (t.k < t.stops.length) { t.path = pathBetween(end.access, t.stops[t.k].entry.access); t.phase = 'drive'; t.d = 0; }
+      else { t.phase = 'pause'; t.t = 0; }
+    }
+  } else { t.t += dt; if (t.t > 1.5) { if (workAuto) startWorkOrder(workIndex + 1); else t.t = -Infinity; } }
+}
+
+// Re-reading warehouse work is done by the local server (GET-only against the ERP); the page only asks for it.
+{
+  const btn = document.getElementById('refreshWork');
+  const when = (iso) => iso ? new Date(iso.endsWith('Z') ? iso : iso + 'Z').toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'never';
+  const paint = (title, note, failed = false) => { btn.replaceChildren(title, Object.assign(document.createElement('small'), { textContent: note })); btn.classList.toggle('failed', failed); };
+  fetch(`/api/warehouse-work?data=${dataset}`).then((r) => r.ok ? r.json() : null).catch(() => null).then((status) => {
+    if (!status?.available) return;
+    btn.hidden = false; placeWorkPanel();
+    paint('↻ Refresh work', `${status.workOrders} work orders · ${status.source === 'odata' ? 'read' : 'imported'} ${when(status.readAt)}`);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; paint('Reading ERP…', 'warehouse work headers and lines');
+      try {
+        const r = await fetch(`/api/warehouse-work?data=${dataset}`, { method: 'POST', headers: { 'X-FactoryOps': '1' } }), body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+        const u = new URL(location.href); u.searchParams.set('wh', WH.id); u.searchParams.set('flow', 'work'); location.href = u.toString();
+      } catch (error) { btn.disabled = false; paint('↻ Retry refresh', error.message, true); }
+    });
+  });
+}
+
 // ---------------------------------------------------------------- interface
 const flowBox = document.getElementById('flows');
-for (const [id, name] of [['structure', 'Structure'], ...FLOWS.map((f) => [f.id, f.name])]) { const b = document.createElement('button'); b.dataset.flow = id; b.textContent = name; b.addEventListener('click', () => setFlow(id)); flowBox.append(b); }
+for (const [id, name] of [['structure', 'Structure'], ...(WORK.length ? [['work', `Warehouse work · ${WORK.length}`]] : []), ...FLOWS.map((f) => [f.id + '', f.name + ' (illustrative)'])]) { const b = document.createElement('button'); b.dataset.flow = id; b.textContent = name; b.addEventListener('click', () => setFlow(id)); flowBox.append(b); }
 const legend = document.getElementById('legend');
 for (const [name, hex] of Object.entries(zoneColour)) { const s = document.createElement('span'), i = document.createElement('i'); i.style.background = '#' + hex.toString(16).padStart(6, '0'); s.append(i, `${name}`); legend.append(s); }
 const ring = marker(0x3dd6c6); ring.scale.setScalar(1.3); ring.visible = false; hall.add(ring);
@@ -368,13 +478,16 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   for (const [k, v] of rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
   ring.position.set(e2.pos.x, e2.pos.y + 0.06, e2.pos.z); ring.visible = true;
 });
-function resize() { const w = innerWidth, h = innerHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); composer.setSize(w, h); labelRenderer.setSize(w, h); }
-addEventListener('resize', resize); resize(); setFlow(params.get('flow') ?? 'structure');
+// Keep the work list below the header, which wraps on narrow screens.
+const placeWorkPanel = () => { document.getElementById('workPanel').style.top = `${Math.round(document.getElementById('top').getBoundingClientRect().bottom + 10)}px`; };
+function resize() { placeWorkPanel(); const w = innerWidth, h = innerHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); composer.setSize(w, h); labelRenderer.setSize(w, h); }
+addEventListener('resize', resize); resize(); setFlow(params.get('flow') ?? (WORK.length ? 'work' : 'structure'));
 document.getElementById('loading').remove();
 const timer = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(timer.getDelta(), 0.05);
   if (flow) stepFlow(dt);
+  if (workTruck) stepWork(dt);
   ring.rotation.z += dt * 0.5; controls.update(); composer.render(); labelRenderer.render(scene, camera);
 });
 </script>

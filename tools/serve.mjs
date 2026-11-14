@@ -1,6 +1,6 @@
 // Local server for the viewer. No dependencies.
-// Besides static files it offers two actions: re-reading production orders and jobs from the ERP
-// into a local snapshot, and saving the local model mapping (visuals.json). The browser never sees credentials; the read runs here and is GET-only.
+// Besides static files it offers three actions: re-reading production orders and jobs from the ERP
+// into a local snapshot, re-reading warehouse work into warehouses.json, and saving the local model mapping (visuals.json). The browser never sees credentials; the read runs here and is GET-only.
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { access, readFile, writeFile } from 'node:fs/promises';
@@ -57,22 +57,38 @@ async function readBody(request, limit = 200_000) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+async function workStatus(dataset) {
+  const folder = snapshotFolder(dataset);
+  if (!folder || !(await exists(join(folder, 'warehouses.json'))) || !(await exists(join(folder, 'snapshot.json')))) return { available: false, reason: 'This data set has no local warehouse extract.' };
+  if (!(await exists(connection))) return { available: false, reason: 'No connection file (data/local/connection.local.json).' };
+  const { meta } = JSON.parse(await readFile(join(folder, 'warehouses.json'), 'utf8'));
+  const company = JSON.parse(await readFile(join(folder, 'snapshot.json'), 'utf8')).meta.company;
+  return { available: true, busy: running, company, source: meta.work?.source ?? null, readAt: meta.work?.readAt ?? meta.work?.extractedAt ?? null, workOrders: meta.work?.headers ?? 0 };
+}
+
 let running = false;
-async function refreshOrders(dataset) {
-  const status = await ordersStatus(dataset);
+/** Runs one GET-only extraction script for a local data set, one at a time. */
+async function runRefresh(status, script, args) {
   if (!status.available) return { code: 409, body: { error: status.reason } };
   if (running) return { code: 409, body: { error: 'A refresh is already running.' } };
   running = true;
   try {
-    const args = [join(root, 'tools', 'extract-orders.mjs'), snapshotFolder(dataset), '--connection', connection, '--company', String(status.company), '--site', String(status.site)];
-    const failure = await new Promise((resolve) => execFile(process.execPath, args, { cwd: root, windowsHide: true, timeout: 180_000 }, (error, stdout, stderr) => {
+    const failure = await new Promise((resolve) => execFile(process.execPath, [join(root, 'tools', script), ...args], { cwd: root, windowsHide: true, timeout: 180_000 }, (error, stdout, stderr) => {
       console.log(stdout.trim());
       resolve(error ? (stderr.trim().split('\n').pop() || error.message) : null);
     }));
-    running = false;
-    if (failure) return { code: 502, body: { error: failure } };
-    return { code: 200, body: await ordersStatus(dataset) };
+    return failure ? { code: 502, body: { error: failure } } : null;
   } finally { running = false; }
+}
+async function refreshOrders(dataset) {
+  const status = await ordersStatus(dataset);
+  const failed = await runRefresh(status, 'extract-orders.mjs', [snapshotFolder(dataset), '--connection', connection, '--company', String(status.company), '--site', String(status.site)]);
+  return failed ?? { code: 200, body: await ordersStatus(dataset) };
+}
+async function refreshWork(dataset) {
+  const status = await workStatus(dataset);
+  const failed = await runRefresh(status, 'extract-warehouse-work.mjs', [snapshotFolder(dataset), '--connection', connection, '--company', String(status.company)]);
+  return failed ?? { code: 200, body: await workStatus(dataset) };
 }
 
 /** The refresh must come from this page: same origin, plus a header a cross-site form cannot send. */
@@ -95,6 +111,16 @@ createServer(async (request, response) => {
       if (request.method !== 'POST') return json(response, 405, { error: 'Method not allowed' });
       if (!fromViewer(request)) return json(response, 403, { error: 'Forbidden' });
       const result = await refreshOrders(dataset);
+      return json(response, result.code, result.body);
+    } catch (error) { return json(response, 500, { error: error.message }); }
+  }
+  if (path === '/api/warehouse-work') {
+    const dataset = url.searchParams.get('data');
+    try {
+      if (request.method === 'GET') return json(response, 200, await workStatus(dataset));
+      if (request.method !== 'POST') return json(response, 405, { error: 'Method not allowed' });
+      if (!fromViewer(request)) return json(response, 403, { error: 'Forbidden' });
+      const result = await refreshWork(dataset);
       return json(response, result.code, result.body);
     } catch (error) { return json(response, 500, { error: error.message }); }
   }

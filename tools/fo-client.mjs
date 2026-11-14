@@ -31,9 +31,10 @@ export async function connect(configPath) {
   }
 
   /** GETs one entity collection, following server paging up to `limit` rows. */
-  async function read(collection, { filter, select, limit = 5000 } = {}) {
+  async function read(collection, { filter, select, limit = 5000, crossCompany = true, top } = {}) {
     const url = new URL(`/data/${collection}`, origin);
-    url.searchParams.set('cross-company', 'true');
+    if (crossCompany) url.searchParams.set('cross-company', 'true');
+    if (top) url.searchParams.set('$top', String(top));
     if (filter) url.searchParams.set('$filter', filter);
     if (select) url.searchParams.set('$select', select.join(','));
     const rows = [];
@@ -41,7 +42,14 @@ export async function connect(configPath) {
     while (next) {
       if (new URL(next).origin !== origin) throw new Error('Refusing to follow a link outside the configured environment.');
       const response = await fetch(next, { method: 'GET', headers: { Authorization: `Bearer ${await accessToken()}`, Accept: 'application/json', Prefer: 'odata.maxpagesize=1000' } });
-      if (!response.ok) { const error = new Error(`${collection}: HTTP ${response.status}`); error.status = response.status; throw error; }
+      if (!response.ok) {
+        // Keep the server's own explanation (OData error message); it never contains the token.
+        const text = await response.text().catch(() => '');
+        let detail = text.slice(0, 400);
+        try { const body = JSON.parse(text); detail = body.error?.message ?? body.Message ?? detail; } catch { /* not JSON */ }
+        const error = new Error(`${collection}: HTTP ${response.status}`); error.status = response.status; error.detail = detail; throw error;
+      }
+      if (top) { const page = await response.json(); rows.push(...page.value); break; }
       const page = await response.json();
       rows.push(...page.value);
       if (rows.length > limit) throw new Error(`${collection}: more than ${limit} rows; narrow the filter.`);

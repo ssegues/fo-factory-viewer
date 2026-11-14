@@ -2,6 +2,14 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.7.0 — 2026-11-14
+
+- **Real warehouse work** on the warehouse page. A Warehouse work view lists the work orders of the selected warehouse (type, status, source order, lines) and a forklift replays each one, picking and putting at its real locations in line order. Click a work order to replay it; its lines show in the details panel. Speed and timing are illustrative.
+- `tools/import-warehouse-work.mjs` merges warehouse work headers and lines from a Data management package into `warehouses.json`. Lines without a known location are kept and flagged.
+- **Refresh work** button on the warehouse page: the local server re-reads warehouse work headers and lines from the ERP (GET only, `tools/extract-warehouse-work.mjs`) and reloads the work view. OData and Data management give the same result; both share one mapping.
+- The OData client keeps the server's error message and supports single-company and `$top` reads, for diagnosing access errors.
+- The illustrative flows are now labelled as such, and the warehouse selector shows how many work orders each warehouse has.
+
 ## 0.6.0 — 2026-11-14
 
 - **Warehouse page (proof of concept)**, reached from a Factory / Warehouse switch in the header. Pick a warehouse and see it laid out from its ERP structure: rack rows by aisle, rack, shelf and bin, floor areas, and dock-side locations, coloured by zone. Locations are clickable.
