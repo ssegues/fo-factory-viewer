@@ -21,6 +21,7 @@
   .seg button { background:rgba(255,255,255,.03); color:var(--dim); border:1px solid rgba(140,170,190,.25); padding:7px 14px; font:inherit; font-size:12px; letter-spacing:1.4px; text-transform:uppercase; cursor:pointer; }
   .seg button.on { background:rgba(61,214,198,.18); color:var(--accent); border-color:var(--accent); box-shadow:0 0 14px rgba(61,214,198,.25) inset; }
   #routeSel { background:rgba(255,255,255,.04); color:var(--accent); border:1px solid var(--line); padding:6px 8px; font-size:12px; max-width:240px; }
+  #emptyBtn { background:transparent; color:var(--dim); border:1px dashed rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
   #routeSel option { background:#0b1118; color:var(--text); }
   #hint { top:86px; left:16px; padding:9px 14px; color:var(--dim); font-size:13px; max-width:540px; }
   #detail { top:16px; right:16px; width:290px; padding:14px 16px 16px; }
@@ -63,6 +64,7 @@
     <button data-mode="orders">Orders</button>
   </div>
   <select id="routeSel" class="mono" aria-label="Route"></select>
+  <button id="emptyBtn" class="mono"></button>
 </div>
 <div id="hint" class="hud"></div>
 <div id="demo" class="mono">Illustrative data · visual prototype</div>
@@ -100,6 +102,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // The viewer never talks to the ERP. It reads a snapshot (the manufacturing model as extracted)
 // and a local visuals file (which 3D model stands for which resource). `?data=<folder>` picks the set.
 const requested = new URLSearchParams(location.search).get('data') ?? 'sample';
+const SHOW_EMPTY = new URLSearchParams(location.search).get('empty') === '1';
 const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? requested : 'sample';
 async function loadJson(name) { const r = await fetch(`../data/${dataset}/${name}.json`); return r.ok ? r.json() : null; }
 const [SNAP, VISUALS] = await Promise.all([loadJson('snapshot'), loadJson('visuals')]);
@@ -130,7 +133,7 @@ function modelFor(r) {
 }
 const SITE = { units: SNAP.productionUnits.map((u) => ({ ...u,
   groups: SNAP.resourceGroups.filter((g) => g.productionUnitId === u.id).sort((a, b) => a.id.localeCompare(b.id)).map((g) => ({ ...g,
-    resources: stations.filter((r) => r.groupId === g.id).map((r) => ({ ...r, model: modelFor(r), worker: workerAt[r.id] })) })).filter((g) => g.resources.length),
+    resources: stations.filter((r) => r.groupId === g.id).map((r) => ({ ...r, model: modelFor(r), worker: workerAt[r.id] })) })).filter((g) => g.resources.length || SHOW_EMPTY),
 })).filter((u) => u.groups.length) };
 const hiddenGroups = SNAP.resourceGroups.length - SITE.units.reduce((n, u) => n + u.groups.length, 0);
 const ROUTES = rawRoutes.map((r) => {
@@ -165,7 +168,12 @@ function clockLabel(t) {
 }
 document.getElementById('scope').textContent = `${SNAP.meta?.company ?? ''} // SITE ${SNAP.meta?.site ?? ''}`;
 document.getElementById('demo').textContent = SNAP.meta?.source === 'sample' ? 'Illustrative data · sample snapshot'
-  : `D365FO snapshot · ${SNAP.meta?.company} site ${SNAP.meta?.site} · effective ${SNAP.meta?.effectiveDate ?? ''}` + (hiddenGroups ? ` · ${hiddenGroups} empty groups hidden` : '');
+  : `D365FO snapshot · ${SNAP.meta?.company} site ${SNAP.meta?.site} · effective ${SNAP.meta?.effectiveDate ?? ''}` + '';
+const emptyCount = SNAP.resourceGroups.filter((g) => !stations.some((r) => r.groupId === g.id)).length;
+const emptyBtn = document.getElementById('emptyBtn');
+if (emptyCount) { emptyBtn.textContent = SHOW_EMPTY ? `Hide ${emptyCount} empty groups` : `Show ${emptyCount} empty groups`;
+  emptyBtn.addEventListener('click', () => { const u = new URL(location.href); if (SHOW_EMPTY) u.searchParams.delete('empty'); else u.searchParams.set('empty', '1'); location.href = u.toString(); }); }
+else emptyBtn.remove();
 
 // ---------------------------------------------------------------- renderer
 const stage = document.getElementById('stage');
@@ -503,6 +511,7 @@ for (const unit of SITE.units) {
   for (const group of unit.groups) {
     const rows = Math.ceil(group.resources.length / PER_ROW);
     group.w = Math.min(PER_ROW, group.resources.length) * CELL + 1.6; group.d = (rows - 1) * ROW + CELL + 2.4;
+    if (!group.resources.length) { group.w = 8.5; group.d = 5.2; }
     let shelf = shelves[shelves.length - 1];
     if (!shelf || shelf.w + AISLE + group.w > UNIT_MAX) { shelf = { w: 0, d: 0, groups: [] }; shelves.push(shelf); }
     group.offset = shelf.groups.length ? shelf.w + AISLE : 0; shelf.w = group.offset + group.w; shelf.d = Math.max(shelf.d, group.d); shelf.groups.push(group);
@@ -527,7 +536,7 @@ for (const unit of SITE.units) {
   for (const shelf of unit.shelves) {
     for (const group of shelf.groups) {
       const gx = ux - unit.w / 2 + 1.5 + group.offset + group.w / 2, gz = shelfZ + group.d / 2;
-      const gs = slab(group.w, group.d, 0.06, LEVEL, 0x6f7f90, 4); gs.position.set(gx, gs.position.y, gz);
+      const gs = slab(group.w, group.d, 0.06, LEVEL, group.resources.length ? 0x6f7f90 : 0x47525f, 4); gs.position.set(gx, gs.position.y, gz);
       gs.material.emissive = new THREE.Color(0x3dd6c6); gs.material.emissiveIntensity = 0; world.add(gs);
       border(world, group.w, group.d, gx, LEVEL + 0.005, gz);
       const gt = paintedText(`${group.id}  ${group.name}`, 0.8, '#7ff0e3', 0.8); gt.position.set(gx - group.w / 2 + 0.6, LEVEL + 0.01, gz + group.d / 2 - 0.75); world.add(gt);
@@ -553,6 +562,7 @@ for (const unit of SITE.units) {
           pickables.push(w); machines[res.id].worker = w;
         }
       });
+      if (!group.resources.length) continue;
       const cab = box(1.0, 2.0, 0.7, M.graphite, gx + group.w / 2 - 0.9, LEVEL + 1.0, gz - group.d / 2 + 0.6, 0.05); world.add(cab);
       for (let k = 0; k < 3; k++) { const led = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), glow([0x3ddc84, 0xffa23d, 0x3dd6c6][k], 3)); led.position.set(cab.position.x - 0.25 + k * 0.25, LEVEL + 1.7, cab.position.z + 0.36); world.add(led); }
     }
@@ -677,14 +687,20 @@ function buildRoute(route) {
     if (prev.length > 1 && next.length > 1) layers.push([{ key: 'junction' + i, pos: centre(prev).lerp(centre(next), 0.5) }]);
     layers.push(next);
   }
-  for (let i = 0; i < layers.length - 1; i++) for (const a of layers[i]) for (const b of layers[i + 1]) {
-    const lane = new THREE.Mesh(ribbon(curveFor(a, b)), laneMat); lane.position.y = LEVEL; routeStatic.add(lane);
-  }
+  lanes = new Map(); const few = layers.every((l) => l.length <= 2);
+  if (few) for (let i = 0; i < layers.length - 1; i++) for (const a of layers[i]) for (const b of layers[i + 1]) laneFor(a, b).until = Infinity;
   const tagged = new Set();
   const tag = (id, text, cls) => { if (!machines[id] || tagged.has(id)) return; tagged.add(id);
     const t = label(text, cls); t.position.copy(machines[id].pos).add(new THREE.Vector3(0, machines[id].height + 1.7, 0)); routeStatic.add(t); };
   for (const op of route.ops) for (const id of op.alternatives) tag(id, `OP ${op.no}`, 'op');
   for (const op of route.ops) for (const set of op.assistants) for (const id of set) tag(id, `OP ${op.no} +`, 'op assist');
+}
+// A route with many candidate resources would draw a lane for every pair. Those lanes appear only while a cart uses them.
+let lanes = new Map(), routeClock = 0;
+function laneFor(a, b) {
+  const k = a.key + '>' + b.key;
+  if (!lanes.has(k)) { const mesh = new THREE.Mesh(ribbon(curveFor(a, b)), laneMat); mesh.position.y = LEVEL; routeStatic.add(mesh); lanes.set(k, { mesh, until: 0 }); }
+  return lanes.get(k);
 }
 function describeRoute(route) {
   if (!route) return 'This snapshot has no routes.';
@@ -704,7 +720,8 @@ function makeCart() {
 const carts = []; let spawnClock = 3, spawnCount = 0;
 function release(p) { for (const id of p.busy) machines[id].active--; p.busy = []; }
 function stepRoute(dt) {
-  laneMat.map.offset.x -= dt * 1.1;
+  laneMat.map.offset.x -= dt * 1.1; routeClock += dt;
+  for (const lane of lanes.values()) lane.mesh.visible = lane.until > routeClock;
   if (layers.length < 3) return;
   spawnClock += dt;
   if (spawnClock > 3.2) {
@@ -715,6 +732,7 @@ function stepRoute(dt) {
   for (let k = carts.length - 1; k >= 0; k--) {
     const p = carts[k];
     if (p.phase === 'move') {
+      laneFor(p.stops[p.i], p.stops[p.i + 1]).until = Math.max(laneFor(p.stops[p.i], p.stops[p.i + 1]).until, routeClock + 1.5);
       const c = curveFor(p.stops[p.i], p.stops[p.i + 1]); p.t += (dt * 8) / Math.max(0.1, c.getLength());
       const u = Math.min(1, p.t), tan = c.getTangentAt(Math.min(0.999, Math.max(0.001, u)));
       p.mesh.position.copy(c.getPointAt(u)); p.mesh.rotation.y = Math.atan2(-tan.z, tan.x);
@@ -731,6 +749,7 @@ function stepRoute(dt) {
     } else { p.t += dt; if (p.t >= p.stops[p.i].op.dwell) { release(p); p.phase = 'move'; p.t = 0; p.mesh.userData.load.visible = true; } }
   }
 }
+window.__factory = { step: (dt) => stepRoute(dt), get busy() { return Object.values(machines).filter((m) => m.active > 0).length; }, get carts() { return carts.length; }, get layers() { return layers.map((l) => l.length); }, get lanes() { return [...lanes.values()].filter((l) => l.mesh.visible).length; }, get clock() { return routeClock; } };
 function clearRoute() { for (const p of carts) routeLayer.remove(p.mesh); carts.length = 0; spawnClock = 3; }
 
 // ---------------------------------------------------------------- orders layer: replay of the ERP schedule
