@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>FactoryOps Lab — warehouse</title>
+<title>FO Factory Viewer — warehouse</title>
 <style>
   :root { --bg:#070b10; --panel:rgba(10,16,23,.86); --line:rgba(61,214,198,.35); --text:#dfe7ee; --dim:#8497a8; --accent:#3dd6c6; --warm:#ffa23d; }
   html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:"Segoe UI",system-ui,sans-serif; }
@@ -59,7 +59,7 @@
 <div id="loading" class="mono">Stacking shelves…</div>
 
 <div id="top" class="hud">
-  <div><h1>FactoryOps Lab <span id="version" class="mono"></span></h1><small class="mono" id="scope"></small></div>
+  <div><h1>FO Factory Viewer <span id="version" class="mono"></span></h1><small class="mono" id="scope"></small></div>
   <div class="nav"><a id="navFactory" href="./">Factory</a><a class="on">Warehouse</a></div>
   <select id="whSel" class="mono" aria-label="Warehouse"></select>
   <div class="seg" id="flows"></div>
@@ -449,7 +449,7 @@ function stepWork(dt) {
     btn.addEventListener('click', async () => {
       btn.disabled = true; paint('Reading ERP…', 'warehouse work headers and lines');
       try {
-        const r = await fetch(`/api/warehouse-work?data=${dataset}`, { method: 'POST', headers: { 'X-FactoryOps': '1' } }), body = await r.json();
+        const r = await fetch(`/api/warehouse-work?data=${dataset}`, { method: 'POST', headers: { 'X-FO-Viewer': '1' } }), body = await r.json();
         if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
         const u = new URL(location.href); u.searchParams.set('wh', WH.id); u.searchParams.set('flow', 'work'); location.href = u.toString();
       } catch (error) { btn.disabled = false; paint('↻ Retry refresh', error.message, true); }

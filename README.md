@@ -1,69 +1,93 @@
-# FactoryOps Lab
+# FO Factory Viewer
 
-A 3D viewer for the manufacturing model held in Dynamics 365 Finance & Operations: production units, resource groups, resources, routes and production orders.
+**See your Dynamics 365 Finance & Operations manufacturing model as a living 3D factory.**
 
-The project is read-only towards the ERP. The page renders a local snapshot file; the only ERP traffic is GET requests issued by the local tools.
+FO Factory Viewer is a community project that reads the production setup of Dynamics 365 Finance & Operations (production units, resource groups, resources, routes, BOMs, production orders and warehouse work) and turns it into an animated, game-style factory floor and warehouse. It is read-only: it never writes to the ERP.
 
-## Run
+![Route view: work travels between operations, components arrive in violet](docs/screenshots/factory-route.png)
 
-Requires Node.js 22 or later and an internet connection (Three.js is loaded from a CDN).
+## What you can see
+
+| Factory floor from the ERP hierarchy | Warehouse work replayed at real locations |
+| --- | --- |
+| ![Floor generated from USMF site 1](docs/screenshots/factory-floor.png) | ![Warehouse 51 with its production pick work](docs/screenshots/warehouse-work.png) |
+
+- **Floor** — the shop floor is generated from the hierarchy: site → production unit → resource group → resource. No coordinates are needed; the layout is automatic.
+- **Route** — pick a route and watch carts travel between operations. An operation that names a capability or a group lights every eligible resource.
+- **Orders** — production orders replayed on a timeline against the jobs the ERP scheduled.
+- **Material** — violet lanes and crates carry components from the location the BOM line consumes from to the resource that uses them.
+- **Warehouse** — any warehouse laid out from its locations (aisle, rack, shelf, bin, zone), with its real warehouse work replayed by a forklift, line by line.
+- **Models** — the ERP does not say whether a resource is a press or a robot. A panel maps resources to 3D models with rules by resource, group, type or capability; the mapping stays local.
+
+## Try it in one minute
+
+Requires [Node.js](https://nodejs.org) 22 or later and an internet connection (Three.js is loaded from a CDN). No packages to install.
 
 ```sh
+git clone <this repository> fo-factory-viewer
+cd fo-factory-viewer
 npm start
 ```
 
-On Windows, double-click `start.bat` instead: it starts the server if needed and opens the viewer on the first real extract under `data/local`, or on the sample.
+Open http://127.0.0.1:4174. You will see the sample factory, built from invented data in the same shape as a real extract. On Windows you can double-click `start.bat` instead.
 
-Otherwise open http://127.0.0.1:4174. Add `?data=<folder>` to load `data/<folder>/snapshot.json` instead of the sample.
+## Connect your own Dynamics 365
 
-## Refreshing orders
+Everything real lives in `data/local/`, which git ignores. Nothing below writes to the ERP.
 
-When the viewer shows a real extract (`?data=local/<folder>`) and `data/local/connection.local.json` exists, the header shows **Refresh orders**. It asks the local server to re-read production orders, route operations and scheduled jobs (GET only), merges them into that snapshot and reloads the Orders view. Credentials stay on the server side and are never sent to the page. The same read is available as `node tools/extract-orders.mjs data/local/<folder>`.
+1. **Structure.** In Data management, export a package with the *410 - Production control* template (XML). Then:
+   ```sh
+   node tools/import-dmf.mjs <extracted-package-folder> data/local/my-site --site 1 --company USMF
+   ```
+2. **Connection for live reads.** Register an application in Microsoft Entra ID, link it to a Dynamics 365 user under *System administration > Setup > Microsoft Entra applications*, and give that user roles with read access to the data entities you need (production orders, route jobs, BOM lines, warehouse work). Copy [`docs/connection.example.json`](docs/connection.example.json) to `data/local/connection.local.json` and fill it in. The client secret is not stored in that file: on Windows it is kept encrypted for your user with `Export-Clixml`, and `secretFile` points to it.
+3. **Orders.** Read production orders, operations, scheduled jobs and BOM lines (GET only):
+   ```sh
+   node tools/extract-orders.mjs data/local/my-site
+   ```
+4. **Warehouses (optional).** Export the warehouse setup with Data management and import it; then read the warehouse work:
+   ```sh
+   node tools/import-warehouse.mjs <extracted-warehouse-package> data/local/my-site
+   node tools/extract-warehouse-work.mjs data/local/my-site
+   ```
+5. Open http://127.0.0.1:4174/viewer/?data=local/my-site. Once the connection exists, **Refresh orders** and **Refresh work** buttons re-read the ERP from the page; the credentials stay in the local server.
 
-The structure (units, groups, resources, routes, BOMs) comes from a Data management package and is refreshed with `node tools/import-dmf.mjs`.
+An access error (HTTP 403) on a data entity usually means the user's roles grant the screens but not the entity itself: the entity privilege must grant *Read* in the *Data services* integration mode, be part of a role of that user, and be published.
 
-## Resource models
+## What is real and what is not
 
-The ERP does not say what a resource looks like. **Models** in the header opens a panel that maps resources to models with rules; the most specific wins: resource, then resource group, resource type, capability, and a default. Changes show at once. For a real extract they are saved to `data/local/<folder>/visuals.json`; for the sample they last until the page is reloaded. This mapping is local and is never written to the ERP.
+- **From the ERP:** the hierarchy, resources and capabilities, which resources can perform each operation, routes, BOMs, production orders and their scheduled jobs, BOM line consumption locations, warehouse locations and zones, and warehouse work with its lines.
+- **Derived:** the floor layout, the position inside a rack (read from the location ID), and which 3D model stands for each resource.
+- **Viewer conventions:** speeds, how long a zero-length job is shown as busy, and the moment a material crate arrives (when the job starts).
+- **Decoration:** lamps, dust, the logistics lane with its trains and pedestrians, the boxes on warehouse shelves, and the flows marked *illustrative* on the warehouse page.
 
-Each resource group's input and output location, as set up in the ERP, is painted on the floor as an IN and an OUT bay.
-
-## Warehouse page
-
-When the data folder holds a `warehouses.json`, the header shows **Factory** and **Warehouse**. The warehouse page lays out one warehouse from its ERP structure (location type, zone, aisle, rack, shelf, bin). It is a proof of concept: forklift trips join real locations of the right type but are not real warehouse work, and the box fill is decorative because stock by location is not read. Build the file with `node tools/import-warehouse.mjs <package-folder> data/local/<folder>`.
-
-Warehouses with warehouse work open in the **Warehouse work** view: the work orders from the ERP are listed and replayed by a forklift, line by line, at their real locations. Add them with `node tools/import-warehouse-work.mjs <package-folder> data/local/<folder>` after importing the structure, or read them from the ERP with **Refresh work** on the warehouse page (`node tools/extract-warehouse-work.mjs data/local/<folder>`, GET only).
-
-## Material flow
-
-Violet lanes and crates show components reaching the resources. The source is the warehouse and location on the BOM line; a line flagged for resource consumption uses the input location of the resource's group; a line with no operation number is consumed at the first operation. In the Orders view the order's own BOM lines are used, falling back to the product's BOM when the order has none. Timing is a viewer convention: the crate arrives as the job starts.
-
-## Views
-
-- **Floor** — the shop floor generated from the hierarchy: site → production unit → resource group → resource.
-- **Route** — pick a route and watch work travel between its operations. An operation that requires a resource group lights the whole group.
-- **Orders** — production orders replayed against their scheduled jobs on a timeline.
-
-Workers are shown only as secondary resources, standing next to the machine they assist.
-
-## Layout
+## Project layout
 
 | Path | Purpose |
 | --- | --- |
-| `viewer/` | The 3D viewer (single page, no build step) and its glTF models |
-| `data/sample/snapshot.json` | Invented data in the snapshot format |
-| `data/sample/visuals.json` | Local mapping from resources to 3D models |
-| `data/local/` | Real extracts; ignored by git |
-| `tools/serve.mjs` | Local server: static files, the order refresh and saving the model mapping |
-| `tools/import-dmf.mjs` | Builds a snapshot from a Data management package |
-| `tools/import-warehouse.mjs` | Builds `warehouses.json` from a warehouse Data management package |
-| `tools/import-warehouse-work.mjs`, `tools/extract-warehouse-work.mjs` | Warehouse work into `warehouses.json`, from a package or from OData |
-| `tools/extract-orders.mjs`, `tools/fo-client.mjs` | GET-only OData read of orders and jobs |
+| `viewer/index.html` | Factory page (single file, no build step) |
+| `viewer/warehouse.html` | Warehouse page |
+| `viewer/models/` | glTF models of the CNC, robot and packaging cells |
+| `data/sample/` | Invented sample data in the snapshot format |
+| `data/local/` | Your real extracts and connection file; ignored by git |
+| `tools/serve.mjs` | Local server: static files, the refresh buttons, saving the model mapping |
+| `tools/import-dmf.mjs` | Snapshot from a Data management package |
+| `tools/extract-orders.mjs` | Orders, jobs and BOM lines over OData (GET only) |
+| `tools/import-warehouse.mjs` | `warehouses.json` from a warehouse Data management package |
+| `tools/import-warehouse-work.mjs`, `tools/extract-warehouse-work.mjs` | Warehouse work, from a package or over OData |
+| `tools/fo-client.mjs` | The read-only OData client: GET only, one environment, credentials never printed |
 
 ## Versions
 
-The current version is in `package.json` and in the viewer header. `CHANGELOG.md` lists what each version added; `ROADMAP.md` lists what the next ones are meant to include.
+The current version is shown in the viewer header and in `package.json`. [`CHANGELOG.md`](CHANGELOG.md) lists what each version added and [`ROADMAP.md`](ROADMAP.md) what comes next.
 
-## Status
+## Licence
 
-Early prototype. The sample data is invented. CNC, robot and packaging use Blender models; press, inspection, benches and tanks are built in code. Lamps, dust, the logistics lane with its tugger trains and the people walking beside it are decoration and carry no ERP data.
+Copyright © 2026 Sergi Segués.
+
+FO Factory Viewer is free software under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You may use, study, modify and share it, including commercially, provided that anything you distribute or offer to users over a network is released with its complete source code under the same licence, and that the copyright and licence notices are kept.
+
+**Commercial licence.** If you want to build it into a closed product or service without the AGPL obligations, a separate commercial licence is available from the author; get in touch through the author's GitHub profile.
+
+**Contributions.** Because the project is dual-licensed, contributions can only be accepted if their author agrees that they may be distributed under both the AGPL and the commercial licence. Please say so in your pull request.
+
+Dynamics 365, Finance and Operations and Microsoft Entra are trademarks of Microsoft. This project is not affiliated with or endorsed by Microsoft.

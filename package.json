@@ -1,7 +1,8 @@
 {
-  "name": "factoryops-lab",
-  "version": "0.7.0",
+  "name": "fo-factory-viewer",
+  "version": "0.7.1",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "A 3D viewer for Dynamics 365 Finance & Operations manufacturing structure, routes and production orders.",
   "engines": { "node": ">=22" },

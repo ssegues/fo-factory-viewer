@@ -20,8 +20,8 @@ set "URL=http://127.0.0.1:4174/viewer/?data=%DATASET%"
 
 netstat -ano | findstr /c:":4174 " | findstr LISTENING >nul
 if errorlevel 1 (
-  echo Starting the FactoryOps Lab server...
-  start "FactoryOps Lab server" /min node tools\serve.mjs
+  echo Starting the FO Factory Viewer server...
+  start "FO Factory Viewer server" /min node tools\serve.mjs
   ping -n 3 127.0.0.1 >nul
 ) else (
   echo The server is already running.

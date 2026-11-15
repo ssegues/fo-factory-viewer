@@ -1,0 +1,9 @@
+{
+  "environmentName": "my-environment",
+  "financeOperationsUrl": "https://my-environment.operations.dynamics.com",
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "clientId": "00000000-0000-0000-0000-000000000000",
+  "authentication": {
+    "secretFile": "C:\\path\\outside\\the\\repository\\client-secret.xml"
+  }
+}

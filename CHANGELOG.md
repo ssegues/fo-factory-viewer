@@ -2,6 +2,12 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.7.1 — 2026-11-15
+
+- The project is renamed **FO Factory Viewer** (previously FactoryOps Lab), to avoid confusion with an existing commercial product.
+- Licensed under the **GNU AGPL v3.0**, with a separate commercial licence available from the author. The README explains both and how contributions are accepted.
+- The README, licence, example connection file and screenshots are ready for publication.
+
 ## 0.7.0 — 2026-11-14
 
 - **Real warehouse work** on the warehouse page. A Warehouse work view lists the work orders of the selected warehouse (type, status, source order, lines) and a forklift replays each one, picking and putting at its real locations in line order. Click a work order to replay it; its lines show in the details panel. Speed and timing are illustrative.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>FactoryOps Lab — visual prototype</title>
+<title>FO Factory Viewer — visual prototype</title>
 <style>
   :root { --bg:#070b10; --panel:rgba(11,17,24,.9); --line:rgba(90,200,190,.35); --text:#e6edf3; --dim:#8b9bab; --accent:#3dd6c6; --warm:#ffa23d; }
   * { box-sizing:border-box; }
@@ -83,7 +83,7 @@
 <div id="loading" class="mono">Assembling factory…</div>
 
 <div id="top" class="hud">
-  <div><h1>FactoryOps Lab <span id="version" class="mono"></span></h1><small class="mono" id="scope"></small></div>
+  <div><h1>FO Factory Viewer <span id="version" class="mono"></span></h1><small class="mono" id="scope"></small></div>
   <div class="nav" id="nav" hidden><a class="on">Factory</a><a id="navWh">Warehouse</a></div>
   <div class="seg" id="modes">
     <button data-mode="structure">Floor</button>
@@ -244,7 +244,7 @@ fetch(`/api/orders?data=${dataset}`).then((r) => r.ok ? r.json() : null).catch((
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.disabled = true; paintRefresh('Reading ERP…', `${status.environment ?? 'D365FO'} · orders, operations, jobs`);
     try {
-      const r = await fetch(`/api/orders?data=${dataset}`, { method: 'POST', headers: { 'X-FactoryOps': '1' } }), body = await r.json();
+      const r = await fetch(`/api/orders?data=${dataset}`, { method: 'POST', headers: { 'X-FO-Viewer': '1' } }), body = await r.json();
       if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
       const u = new URL(location.href); u.searchParams.set('mode', 'orders'); location.href = u.toString();
     } catch (error) { refreshBtn.disabled = false; paintRefresh('↻ Retry refresh', error.message, true); }
@@ -1231,7 +1231,6 @@ function stepRoute(dt) {
     } else { p.t += dt; if (p.t >= p.stops[p.i].op.dwell) { release(p); p.phase = 'move'; p.t = 0; p.mesh.userData.load.visible = true; } }
   }
 }
-window.__factory = { step: (dt) => stepRoute(dt), get busy() { return Object.values(machines).filter((m) => m.active > 0).length; }, get carts() { return carts.length; }, get layers() { return layers.map((l) => l.length); }, get lanes() { return [...lanes.values()].filter((l) => l.mesh.visible).length; }, get clock() { return routeClock; } };
 function clearRoute() { for (const p of carts) routeLayer.remove(p.mesh); carts.length = 0; spawnClock = 3; }
 
 // ---------------------------------------------------------------- orders layer: replay of the ERP schedule
@@ -1338,7 +1337,7 @@ function mappingChanged() {
   mapState.textContent = 'Saving…'; clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      const r = await fetch(`/api/visuals?data=${dataset}`, { method: 'PUT', headers: { 'X-FactoryOps': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ byResource: V.byResource, byGroup: V.byGroup, byType: V.byType, byCapability: V.byCapability, fallback: V.fallback }) });
+      const r = await fetch(`/api/visuals?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ byResource: V.byResource, byGroup: V.byGroup, byType: V.byType, byCapability: V.byCapability, fallback: V.fallback }) });
       if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
       mapState.textContent = `Saved to data/${dataset}/visuals.json`;
     } catch (error) { mapState.textContent = `Not saved: ${error.message}`; }

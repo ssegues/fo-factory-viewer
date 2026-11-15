@@ -94,7 +94,7 @@ async function refreshWork(dataset) {
 /** The refresh must come from this page: same origin, plus a header a cross-site form cannot send. */
 function fromViewer(request) {
   const origin = request.headers.origin;
-  return request.headers['x-factoryops'] === '1' && (!origin || origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`);
+  return request.headers['x-fo-viewer'] === '1' && (!origin || origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`);
 }
 
 createServer(async (request, response) => {
@@ -150,5 +150,5 @@ createServer(async (request, response) => {
     response.writeHead(404).end('Not found');
   }
 }).listen(port, '127.0.0.1', () => {
-  console.log(`FactoryOps Lab viewer ready at http://127.0.0.1:${port}`);
+  console.log(`FO Factory Viewer ready at http://127.0.0.1:${port}`);
 });
