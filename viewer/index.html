@@ -1379,16 +1379,17 @@ function placeOrders(t) {
     const busyUntil = (j) => Math.max(j[2], j[1] + MIN_BUSY), first = jobs[0][1], done = busyUntil(jobs[last]);
     o.mesh.visible = t >= first - TRAVEL && t <= done + TRAVEL;
     for (const s of o.supplies) { const u = (t - (s.at - TRAVEL)) / TRAVEL; s.mesh.visible = showMaterial && o.mesh.visible && u >= 0 && u <= 1.25; if (s.mesh.visible) s.mesh.position.copy(s.curve.getPoint(ease(Math.min(1, u)))); }
+    o.progress = t < first ? 0 : last + 2;
     if (!o.mesh.visible) continue;
-    let pos;
-    if (t < first) pos = o.curves[0].getPoint(ease((t - (first - TRAVEL)) / TRAVEL));
-    else if (t >= done) pos = o.curves[last + 1].getPoint(ease((t - done) / TRAVEL));
+    let pos, u;
+    if (t < first) { u = ease((t - (first - TRAVEL)) / TRAVEL); pos = o.curves[0].getPoint(u); o.progress = u; }
+    else if (t >= done) { u = ease((t - done) / TRAVEL); pos = o.curves[last + 1].getPoint(u); o.progress = last + 1 + u; }
     else {
       let k = 0; while (k < last && jobs[k + 1][1] <= t) k++;
       const next = k < last ? jobs[k + 1][1] : Infinity;
       const leave = k < last ? next - Math.min(TRAVEL, (next - jobs[k][1]) * 0.5) : Infinity;
-      if (t >= leave) pos = o.curves[k + 1].getPoint(ease((t - leave) / (next - leave)));
-      else { pos = o.curves[k].getPoint(1); (waiting[jobs[k][0]] ??= []).push(o); if (t <= busyUntil(jobs[k])) machines[jobs[k][0]].active++; }
+      if (t >= leave) { u = ease((t - leave) / (next - leave)); pos = o.curves[k + 1].getPoint(u); o.progress = k + 1 + u; }
+      else { pos = o.curves[k].getPoint(1); o.progress = k + 1; (waiting[jobs[k][0]] ??= []).push(o); if (t <= busyUntil(jobs[k])) machines[jobs[k][0]].active++; }
     }
     o.mesh.position.copy(pos);
     for (const a of o.assists) if (t >= a[1] && t <= busyUntil(a)) machines[a[0]].active++;
@@ -1417,6 +1418,35 @@ const STATUS = [['StartedUp', 'Started'], ['Released', 'Released'], ['Scheduled'
     orderSel.append(group);
   }
 }
+// Path of the selected order, in its colour: faint where it still has to go, brighter where it has been.
+const focusPath = new THREE.Group(); ordersLayer.add(focusPath);
+const pathTex = chevron.clone(); pathTex.needsUpdate = true;
+let pathSegments = [];
+function buildFocusPath() {
+  for (const c of [...focusPath.children]) { c.element?.remove(); c.geometry?.dispose(); c.material?.dispose?.(); focusPath.remove(c); }
+  pathSegments = [];
+  if (!focus?.jobs.length) return;
+  const colour = new THREE.Color(focus.colour);
+  const ahead = new THREE.MeshBasicMaterial({ map: pathTex, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide, color: colour.clone().multiplyScalar(1.3), toneMapped: false });
+  const done = new THREE.MeshBasicMaterial({ map: pathTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, color: colour.clone().multiplyScalar(2.4), toneMapped: false });
+  for (const c of focus.curves) {
+    const back = new THREE.Mesh(ribbon(c, 0.7), ahead), front_ = new THREE.Mesh(ribbon(c, 0.7), done);
+    back.position.y = LEVEL; front_.position.y = LEVEL + 0.004; focusPath.add(back, front_);
+    pathSegments.push(front_);
+  }
+  // Each stop says which operation runs there.
+  const seen = new Set();
+  for (const j of focus.jobs) {
+    if (seen.has(j[0])) continue; seen.add(j[0]);
+    const ops = focus.jobs.filter((x) => x[0] === j[0]).map((x) => x[3]).filter((x) => x != null);
+    const t = label(ops.length ? `OP ${[...new Set(ops)].join(', ')}` : j[0], 'op'); t.position.copy(machines[j[0]].pos).add(new THREE.Vector3(0, machines[j[0]].height + 1.7, 0)); focusPath.add(t);
+  }
+}
+function stepFocusPath(dt) {
+  if (!pathSegments.length) return;
+  pathTex.offset.x -= dt * 0.6;
+  pathSegments.forEach((mesh, i) => { const f = Math.min(1, Math.max(0, (focus.progress ?? 0) - i)); mesh.visible = f > 0; mesh.geometry.setDrawRange(0, 6 * Math.round(f * 48)); });
+}
 const timeOf = (t) => DATED ? new Date(T0 + t * 3.6e6).toISOString().slice(0, 16).replace('T', ' ') : clockLabel(t);
 function showInfo(info) {
   document.getElementById('d-kind').textContent = info.kind;
@@ -1440,6 +1470,7 @@ function focusOrder(id) {
   } else span = [0, DAY];
   scrub.min = String(span[0]); scrub.max = String(span[1]); scrub.value = String(minutes);
   document.getElementById('timeline').style.visibility = focus && !focus.jobs.length ? 'hidden' : '';
+  buildFocusPath();
   if (!focus) { document.getElementById('hint').textContent = hints.orders; ring.visible = false; return; }
   document.getElementById('hint').textContent = describeOrder(focus);
   const r = focus.raw;
@@ -1623,7 +1654,7 @@ function place(node, dx, dz) {
   if (dx || dz) OFF[kind][id] = [dx, dz]; else delete OFF[kind][id];
 }
 function layoutChanged() {
-  syncPositions(); orderPaths(); setMode(mode); frame(picked);
+  syncPositions(); orderPaths(); buildFocusPath(); setMode(mode); frame(picked);
   undoBtn.disabled = !moves.length; resetSelBtn.disabled = !picked || !OFF[picked.userData.layout.kind][picked.userData.layout.id];
   if (!canSave) { layoutNote(); return; }
   layoutNote('Saving…'); clearTimeout(layoutTimer);
@@ -1761,7 +1792,7 @@ renderer.setAnimationLoop(() => {
   if (mode === 'route') { stepRoute(dt); stepMaterial(dt); }
   if (mode === 'orders') {
     if (playing) { const len = span[1] - span[0]; minutes = span[0] + ((minutes - span[0] + dt * (focus ? len / 30 : DAY / (DATED ? 180 : 48))) % len + len) % len; scrub.value = String(minutes); }
-    placeOrders(minutes);
+    placeOrders(minutes); stepFocusPath(dt);
     for (const o of ORDERS) { o.gem.rotation.y = elapsed * 1.5; o.gem.position.y = 1.5 + Math.sin(elapsed * 2 + o.colour) * 0.12; }
     clock.textContent = clockLabel(minutes);
   }
