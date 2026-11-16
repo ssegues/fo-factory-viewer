@@ -18,7 +18,7 @@ FO Factory Viewer is a community project that reads the production setup of Dyna
 - **Material** — violet lanes and crates carry components from the location the BOM line consumes from to the resource that uses them.
 - **Warehouse** — any warehouse laid out from its locations (aisle, rack, shelf, bin, zone), with its real warehouse work replayed by a forklift, line by line.
 - **Models** — the ERP does not say whether a resource is a press or a robot. A panel maps resources to 3D models with rules by resource, group, type or capability; the mapping stays local.
-- **Layout** — the automatic floor is a starting point. Drag resources, groups or whole production units to match your real plant; the positions are saved locally in `layout.json` and routes and orders follow them. On the warehouse page, rack aisles and floor areas can be moved the same way (`warehouse-layout.json`). The floor itself can be resized and reshaped (L, T, U, annexes) on both pages.
+- **Layout** — the automatic floor is a starting point. Drag resources, groups, whole production units or the logistics areas (raw material, finished goods, production warehouses) to match your real plant; the positions are saved locally in `layout.json` and routes and orders follow them. On the warehouse page, rack aisles and floor areas can be moved the same way (`warehouse-layout.json`). The floor itself can be resized and reshaped (L, T, U, annexes) on both pages.
 
 ## Try it in one minute
 

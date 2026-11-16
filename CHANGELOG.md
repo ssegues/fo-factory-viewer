@@ -2,6 +2,11 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.8.3 — 2026-11-16
+
+- **Movable logistics areas** on the factory floor. A new **Areas** level in the layout editor moves the raw material area, the finished goods area and each production warehouse of the strip at the back, with their pallets and painted locations.
+- Routes, material lanes and production order paths start and end at the new positions. Saved in `layout.json` with the rest of the layout.
+
 ## 0.8.2 — 2026-11-16
 
 - **Floor size and shape**, on both pages. In the layout editor, the new **Floor** level draws the floor as sections: drag a section to move it, drag its corner or edge handles to resize it, add sections for an L, T or U shaped hall or an annex, or go back to the automatic rectangle. **Apply floor** saves the shape and rebuilds the hall around it: walls on the back- and left-facing edges, edge markings, lamps, the logistics lane and the camera framing.

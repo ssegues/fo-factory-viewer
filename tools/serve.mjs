@@ -67,7 +67,7 @@ function cleanLayout(input) {
     }
     return out;
   };
-  const out = { note: 'Local presentation layer: offsets in metres from the automatic layout. Never written back to the ERP.', version: 1, units: map(input.units), groups: map(input.groups), resources: map(input.resources) };
+  const out = { note: 'Local presentation layer: offsets in metres from the automatic layout. Never written back to the ERP.', version: 1, units: map(input.units), groups: map(input.groups), resources: map(input.resources), areas: map(input.areas) };
   const floor = cleanFloor(input.floor); if (floor) out.floor = floor;
   return out;
 }

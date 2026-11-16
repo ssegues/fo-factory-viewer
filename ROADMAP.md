@@ -19,6 +19,7 @@ What each coming version is meant to include. Scope can move between versions; w
 
 ## Done
 
+- Movable raw material, finished goods and production warehouse areas (0.8.3).
 - Floor size and shape on both pages: sections, resize, L/T/U shapes (0.8.2).
 - Manual layout of the warehouse page: rack aisles and floor areas (0.8.1).
 - Manual layout: drag units, groups and resources; saved as a local layer (0.8.0).
