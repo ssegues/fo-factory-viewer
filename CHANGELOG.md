@@ -4,6 +4,8 @@ Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR ste
 
 ## Unreleased
 
+- **Online demo** on GitHub Pages (https://ssegues.github.io/fo-factory-viewer/) with the sample data. A root `index.html` opens the viewer; `.nojekyll` makes GitHub serve the files as they are.
+
 - **ERP connection panel** on the factory page: where the connection points (environment, URL, shortened tenant and client IDs), whether the encrypted secret is stored, and a **Test connection** button that makes one GET. The secret never reaches the page.
 - **Production order selector** in the Orders mode, grouped by status (Started, Released, Scheduled, …). Selecting an order shows only that order, loops the timeline over its jobs, brings its resources into view and fills the detail panel with quantities, route, jobs and parent order. Links can open an order directly with `?order=P000192`.
 - The selected order's path is drawn in its colour, from raw material through each resource to finished goods. The part still ahead is faint, the part already travelled is brighter, and each stop is tagged with its operation numbers.

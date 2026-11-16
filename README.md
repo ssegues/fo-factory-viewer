@@ -4,6 +4,8 @@
 
 FO Factory Viewer is a community project that reads the production setup of Dynamics 365 Finance & Operations (production units, resource groups, resources, routes, BOMs, production orders and warehouse work) and turns it into an animated, game-style factory floor and warehouse. It is read-only: it never writes to the ERP.
 
+**[Open the online demo](https://ssegues.github.io/fo-factory-viewer/)**, with illustrative sample data and nothing to install. Layout changes there last until the page is reloaded; the ERP connection needs a local install (below).
+
 ![Route view: work travels between operations, components arrive in violet](docs/screenshots/factory-route.png)
 
 ## What you can see
