@@ -24,7 +24,7 @@
   .seg { display:flex; gap:6px; }
   .seg button { background:rgba(255,255,255,.03); color:var(--dim); border:1px solid rgba(140,170,190,.25); padding:7px 14px; font:inherit; font-size:12px; letter-spacing:1.4px; text-transform:uppercase; cursor:pointer; }
   .seg button.on { background:rgba(61,214,198,.18); color:var(--accent); border-color:var(--accent); box-shadow:0 0 14px rgba(61,214,198,.25) inset; }
-  #routeSel { background:rgba(255,255,255,.04); color:var(--accent); border:1px solid var(--line); padding:6px 8px; font-size:12px; max-width:240px; }
+  #routeSel, #orderSel { background:rgba(255,255,255,.04); color:var(--accent); border:1px solid var(--line); padding:6px 8px; font-size:12px; max-width:240px; }
   #emptyBtn { background:transparent; color:var(--dim); border:1px dashed rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
   #refreshBtn { background:rgba(61,214,198,.12); color:var(--accent); border:1px solid var(--line); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; text-align:left; line-height:1.35; }
   #refreshBtn small { display:block; color:var(--dim); font-size:10px; letter-spacing:.6px; text-transform:none; }
@@ -37,6 +37,15 @@
   #mapBtn.on { color:var(--accent); border-color:var(--accent); }
   #mapPanel { top:136px; left:16px; width:400px; max-height:calc(100vh - 230px); padding:14px 16px; display:flex; flex-direction:column; gap:8px; font-size:12px; }
   #mapPanel[hidden] { display:none; }
+  #connBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
+  #connBtn.on { color:var(--accent); border-color:var(--accent); } #connBtn i { display:inline-block; width:7px; height:7px; border-radius:50%; background:#5b7a99; margin-right:6px; }
+  #connBtn i.ok { background:#3ddc84; } #connBtn i.bad { background:var(--warm); }
+  #connPanel { top:136px; right:16px; width:330px; padding:14px 16px; display:flex; flex-direction:column; gap:8px; font-size:12px; z-index:3; }
+  #connPanel[hidden] { display:none; } #connPanel .k { color:var(--accent); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
+  #connPanel h2 { margin:0; font-size:16px; font-weight:600; } #connPanel p { margin:0; color:var(--dim); line-height:1.45; }
+  #connPanel dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; } #connPanel dt { color:var(--dim); } #connPanel dd { margin:0; text-align:right; overflow-wrap:anywhere; }
+  #connTest { align-self:flex-start; background:rgba(61,214,198,.12); color:var(--accent); border:1px solid var(--line); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
+  #connTest:disabled { opacity:.6; cursor:progress; } #connResult { font-size:11px; color:var(--dim); } #connResult.ok { color:#3ddc84; } #connResult.bad { color:var(--warm); }
   #layoutBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
   #layoutBtn.on { color:var(--warm); border-color:var(--warm); }
   #layoutPanel { top:136px; left:16px; width:340px; padding:14px 16px; display:flex; flex-direction:column; gap:9px; font-size:12px; }
@@ -104,10 +113,12 @@
     <button data-mode="orders">Orders</button>
   </div>
   <select id="routeSel" class="mono" aria-label="Route"></select>
+  <select id="orderSel" class="mono" aria-label="Production order"></select>
   <button id="emptyBtn" class="mono"></button>
   <button id="matBtn" class="mono on">Material</button>
   <button id="mapBtn" class="mono">Models</button>
   <button id="layoutBtn" class="mono">Layout</button>
+  <button id="connBtn" class="mono" title="ERP connection"><i></i>ERP</button>
   <button id="refreshBtn" class="mono" hidden></button>
 </div>
 <div id="hint" class="hud"></div>
@@ -119,6 +130,14 @@
   <input id="mapFilter" class="mono" type="search" placeholder="Filter resources…" />
   <div id="mapList"></div>
   <div id="mapState" class="mono"></div>
+</div>
+<div id="connPanel" class="hud" hidden>
+  <div class="k mono">ERP connection · read only</div>
+  <h2>Dynamics 365 connection</h2>
+  <p>Read from <span class="mono">data/local/connection.local.json</span> by the local server. The client secret stays encrypted outside the project and never reaches this page.</p>
+  <dl id="connBody"></dl>
+  <button id="connTest" class="mono">Test connection</button>
+  <div id="connResult" class="mono"></div>
 </div>
 <div id="layoutPanel" class="hud" hidden>
   <div class="k mono">Local layer · never written to the ERP</div>
@@ -231,7 +250,7 @@ const ORDERS = rawOrders.map((o) => {
   const jobs = (o.jobs ?? []).filter((j) => j.start != null && j.resourceId).map((j) => ({ primary: !j.priority || j.priority === 'Primary', row: [j.resourceId, clockOf(j.start), clockOf(j.end ?? j.start), j.operation ?? null] }));
   const materials = materialLines(o.materials ?? bomOf[o.productId]?.lines);
   productColour[o.productId] ??= PALETTE[Object.keys(productColour).length % PALETTE.length];
-  return { id: o.id, product: o.productId, colour: productColour[o.productId], materials, materialsFrom: o.materials ? 'Order BOM lines in the ERP' : 'BOM of the product',
+  return { id: o.id, product: o.productId, status: o.status, raw: o, colour: productColour[o.productId], materials, materialsFrom: o.materials ? 'Order BOM lines in the ERP' : 'BOM of the product',
     jobs: jobs.filter((j) => j.primary).map((j) => j.row).sort((x, y) => x[1] - y[1]), assists: jobs.filter((j) => !j.primary).map((j) => j.row),
     rows: [['Product', o.productId ?? '—'], ['Status', o.status ?? '—'], ['Quantity', o.quantity ?? '—'], ['Route', o.routeId ?? '—'], ['Scheduled start', (o.scheduledStart ?? '—').replace('T', ' ')], ['Scheduled end', (o.scheduledEnd ?? '—').replace('T', ' ')], ['Delivery', o.deliveryDate ?? '—'],
       ['Materials', materials.length ? materials.slice(0, 4).map((m) => m.item).join(', ') + (materials.length > 4 ? ` +${materials.length - 4}` : '') + (o.materials ? '' : ' (from the BOM)') : '—']] };
@@ -1324,7 +1343,7 @@ ORDERS.forEach((o, n) => {
   const l = label(o.id, 'order'); l.element.style.color = '#' + o.colour.toString(16).padStart(6, '0'); l.position.y = 2.4; o.mesh.add(l);
   o.mesh.userData.info = { kind: 'Production order', title: `${o.id} · ${o.product ?? ''}`, small: true, rows: o.rows };
   pickables.push(o.mesh); ordersLayer.add(o.mesh);
-  if (!o.jobs.length) return;
+  if (!o.jobs.length) { o.home = sourceOf(o.materials[0] ?? {}, null); return; }
   o.slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
   // Material for each job: a crate leaves the consumption location and reaches the resource as the job starts.
   o.supplies = [];
@@ -1355,7 +1374,8 @@ function placeOrders(t) {
   const waiting = {};
   for (const o of ORDERS) {
     const jobs = o.jobs, last = jobs.length - 1;
-    if (!jobs.length) continue;
+    if (focus && o !== focus) { o.mesh.visible = false; for (const s of o.supplies ?? []) s.mesh.visible = false; continue; }
+    if (!jobs.length) { o.mesh.visible = o === focus; if (o.mesh.visible) o.mesh.position.copy(o.home.pos).add(new THREE.Vector3(1.2, 0, 1.6)); continue; }
     const busyUntil = (j) => Math.max(j[2], j[1] + MIN_BUSY), first = jobs[0][1], done = busyUntil(jobs[last]);
     o.mesh.visible = t >= first - TRAVEL && t <= done + TRAVEL;
     for (const s of o.supplies) { const u = (t - (s.at - TRAVEL)) / TRAVEL; s.mesh.visible = showMaterial && o.mesh.visible && u >= 0 && u <= 1.25; if (s.mesh.visible) s.mesh.position.copy(s.curve.getPoint(ease(Math.min(1, u)))); }
@@ -1381,7 +1401,59 @@ const hints = {
   structure: 'The floor is generated from the ERP hierarchy: production units contain resource groups, groups contain resources.',
   orders: ORDERS.length ? ORDERS.filter((o) => o.jobs.length).length + ' production orders replayed against their scheduled jobs. Markers are coloured by product; violet crates are their components arriving from the consumption location. Drag the timeline or let it play.' : 'This snapshot has no production orders yet.',
 };
-let mode = 'route', minutes = 0, playing = true;
+let mode = 'route', minutes = 0, playing = true, focus = null, span = [0, DAY];
+// ---------------------------------------------------------------- production order selector
+// Picking an order shows only that order, narrows the timeline to its jobs and explains what the ERP says about it.
+const orderSel = document.getElementById('orderSel');
+const STATUS = [['StartedUp', 'Started'], ['Released', 'Released'], ['Scheduled', 'Scheduled'], ['Estimated', 'Estimated'], ['Created', 'Created'], ['ReportedFinished', 'Reported as finished'], ['Completed', 'Ended']];
+{
+  orderSel.add(new Option(`All orders · ${ORDERS.filter((o) => o.jobs.length).length} replayed`, ''));
+  const known = new Set(STATUS.map(([s]) => s));
+  for (const [status, text] of [...STATUS, ...[...new Set(ORDERS.map((o) => o.status))].filter((s) => !known.has(s)).map((s) => [s, s ?? 'No status'])]) {
+    const list = ORDERS.filter((o) => o.status === status).sort((a, b) => b.id.localeCompare(a.id));
+    if (!list.length) continue;
+    const group = document.createElement('optgroup'); group.label = `${text} (${list.length})`;
+    for (const o of list) group.append(new Option(`${o.id} · ${o.product ?? ''}${o.jobs.length ? '' : ' · no jobs'}`, o.id));
+    orderSel.append(group);
+  }
+}
+const timeOf = (t) => DATED ? new Date(T0 + t * 3.6e6).toISOString().slice(0, 16).replace('T', ' ') : clockLabel(t);
+function showInfo(info) {
+  document.getElementById('d-kind').textContent = info.kind;
+  document.getElementById('d-title').textContent = info.title;
+  const body = document.getElementById('d-body'); body.replaceChildren();
+  for (const [k, v] of info.rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
+}
+function describeOrder(o) {
+  const r = o.raw, parent = r.parentOrder && r.parentOrder !== o.id ? ` It is a sub-order of ${r.parentOrder}.` : '';
+  if (o.jobs.length) return `${o.id} (${o.status}): ${o.jobs.length} scheduled job${o.jobs.length === 1 ? '' : 's'} from ${timeOf(o.jobs[0][1])} to ${timeOf(o.jobs.at(-1)[2])}. The timeline loops over that window.${parent}`;
+  const why = !r.routeId && !(r.operations ?? []).length ? 'has no route and no route operations' : r.jobsGenerated === 'No' ? 'has route operations but no scheduled jobs (jobs not generated)' : 'has no scheduled job on a resource of this site';
+  return `${o.id} (${o.status}) ${why} in the ERP, so it cannot be placed on a resource or on the timeline. It is shown where its material comes from: ${o.home.text}.${parent} Schedule it with job scheduling in the ERP and refresh the orders to see it move.`;
+}
+function focusOrder(id) {
+  focus = ORDERS.find((o) => o.id === id) ?? null;
+  orderSel.value = focus?.id ?? '';
+  const u = new URL(location.href); if (focus) u.searchParams.set('order', focus.id); else u.searchParams.delete('order'); history.replaceState(null, '', u);
+  if (focus?.jobs.length) {
+    const first = focus.jobs[0][1], done = Math.max(...focus.jobs.map((j) => Math.max(j[2], j[1] + MIN_BUSY)));
+    span = [first - TRAVEL, done + TRAVEL]; minutes = span[0];
+  } else span = [0, DAY];
+  scrub.min = String(span[0]); scrub.max = String(span[1]); scrub.value = String(minutes);
+  document.getElementById('timeline').style.visibility = focus && !focus.jobs.length ? 'hidden' : '';
+  if (!focus) { document.getElementById('hint').textContent = hints.orders; ring.visible = false; return; }
+  document.getElementById('hint').textContent = describeOrder(focus);
+  const r = focus.raw;
+  showInfo({ kind: 'Production order', title: `${focus.id} · ${r.name ?? focus.product ?? ''}`, rows: [...focus.rows.slice(0, 3),
+    ['Started / remaining', `${r.startedQuantity ?? '—'} / ${r.remainingQuantity ?? '—'}`], ['Route', r.routeId ?? 'none'], ['Operations', String((r.operations ?? []).length)],
+    ['Jobs', focus.jobs.length ? focus.jobs.map((j) => `${j[3] ?? '?'} → ${j[0]}`).slice(0, 4).join(', ') + (focus.jobs.length > 4 ? ` +${focus.jobs.length - 4}` : '') : 'none scheduled'],
+    ...(r.parentOrder && r.parentOrder !== focus.id ? [['Parent order', r.parentOrder]] : []), ...focus.rows.slice(4)] });
+  // Bring its stations (or its material source) into view without changing the camera angle.
+  const points = focus.jobs.length ? focus.jobs.map((j) => machines[j[0]].pos) : [focus.home.pos];
+  const c = points.reduce((a, p) => a.add(new THREE.Vector3(p.x, 0, p.z)), new THREE.Vector3()).multiplyScalar(1 / points.length);
+  camera.position.add(new THREE.Vector3(c.x, 1.5, c.z).sub(controls.target)); controls.target.set(c.x, 1.5, c.z);
+  ring.visible = false;
+}
+orderSel.addEventListener('change', () => { if (mode !== 'orders') setMode('orders'); focusOrder(orderSel.value); });
 const routeSel = document.getElementById('routeSel');
 for (const r of ROUTES) routeSel.add(new Option(`${r.id} · ${r.product} · ${r.name ?? ''}`, r.id));
 routeSel.addEventListener('change', () => setMode('route'));
@@ -1390,8 +1462,9 @@ function setMode(next) {
   mode = next;
   buildRoute(mode === 'route' ? ROUTES[routeSel.selectedIndex] ?? ROUTES[0] : null);
   routeSel.style.display = mode === 'route' && ROUTES.length > 1 ? '' : 'none';
+  orderSel.style.display = mode === 'orders' && ORDERS.length ? '' : 'none';
   document.querySelectorAll('#modes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
-  document.getElementById('hint').textContent = mode === 'route' ? describeRoute(ROUTE) : hints[mode];
+  document.getElementById('hint').textContent = mode === 'route' ? describeRoute(ROUTE) : mode === 'orders' && focus ? describeOrder(focus) : hints[mode];
   document.getElementById('timeline').style.display = mode === 'orders' ? 'flex' : 'none';
   document.getElementById('legend').style.display = mode === 'orders' ? 'none' : 'flex';
   routeLayer.visible = mode === 'route'; ordersLayer.visible = mode === 'orders';
@@ -1483,12 +1556,31 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   let o = hit?.object; while (o && !o.userData.info) o = o.parent;
   if (!o) { ring.visible = false; return; }
   const info = o.userData.info;
-  document.getElementById('d-kind').textContent = info.kind;
-  document.getElementById('d-title').textContent = info.title;
-  const body = document.getElementById('d-body'); body.replaceChildren();
-  for (const [k, v] of info.rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
+  showInfo(info);
   const at = o.getWorldPosition(new THREE.Vector3()); ring.position.set(at.x, LEVEL + 0.03, at.z); ring.scale.setScalar(info.small || info.kind === 'Secondary resource' ? 0.22 : 1); ring.visible = true;
 });
+
+// ---------------------------------------------------------------- ERP connection (shown, never edited here)
+{
+  const btn = document.getElementById('connBtn'), panel = document.getElementById('connPanel'), body = document.getElementById('connBody'), result = document.getElementById('connResult'), test = document.getElementById('connTest');
+  const dot = btn.querySelector('i');
+  const rows = (pairs) => body.replaceChildren(...pairs.flatMap(([k, v]) => [Object.assign(document.createElement('dt'), { textContent: k }), Object.assign(document.createElement('dd'), { textContent: v ?? '—' })]));
+  fetch('/api/connection').then((r) => r.ok ? r.json() : null).catch(() => null).then((s) => {
+    if (!s) { btn.hidden = true; return; }          // opened without the local server (static hosting)
+    if (!s.configured) { rows([['Status', s.reason]]); test.disabled = true; return; }
+    rows([['Environment', s.environmentName], ['URL', s.url], ['Tenant', s.tenant], ['App (client) ID', s.client], ['Client secret', s.secretStored ? 'stored, encrypted' : 'missing'], ['Access', s.access]]);
+  });
+  btn.addEventListener('click', () => { panel.hidden = !panel.hidden; btn.classList.toggle('on', !panel.hidden); });
+  test.addEventListener('click', async () => {
+    test.disabled = true; result.className = 'mono'; result.textContent = 'Reading one legal entity from the ERP…';
+    try {
+      const r = await (await fetch('/api/connection', { method: 'POST', headers: { 'X-FO-Viewer': '1' } })).json();
+      result.className = 'mono ' + (r.ok ? 'ok' : 'bad'); dot.className = r.ok ? 'ok' : 'bad';
+      result.textContent = r.ok ? `OK · ${r.ms} ms · ${r.sample}` : `Failed${r.ms ? ` after ${r.ms} ms` : ''}: ${r.error}`;
+    } catch (error) { result.className = 'mono bad'; dot.className = 'bad'; result.textContent = `Failed: ${error.message}`; }
+    test.disabled = false;
+  });
+}
 
 // ---------------------------------------------------------------- manual layout (local layer)
 // Moving something changes only where it is drawn. Positions are saved per data set in layout.json, as offsets
@@ -1658,7 +1750,9 @@ function resize() {
 scrub.max = String(DAY); scrub.step = 'any';
 addEventListener('resize', resize); resize();
 const startMode = new URLSearchParams(location.search).get('mode');
-setMode(['structure', 'route', 'orders'].includes(startMode) ? startMode : 'route');
+const startOrder = new URLSearchParams(location.search).get('order');
+setMode(startOrder ? 'orders' : ['structure', 'route', 'orders'].includes(startMode) ? startMode : 'route');
+if (startOrder) focusOrder(startOrder);
 document.getElementById('loading').remove();
 
 const timer = new THREE.Clock(); let elapsed = 0;
@@ -1666,7 +1760,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(timer.getDelta(), 0.05); elapsed += dt;
   if (mode === 'route') { stepRoute(dt); stepMaterial(dt); }
   if (mode === 'orders') {
-    if (playing) { minutes = (minutes + dt * (DAY / (DATED ? 180 : 48))) % DAY; scrub.value = String(minutes); }
+    if (playing) { const len = span[1] - span[0]; minutes = span[0] + ((minutes - span[0] + dt * (focus ? len / 30 : DAY / (DATED ? 180 : 48))) % len + len) % len; scrub.value = String(minutes); }
     placeOrders(minutes);
     for (const o of ORDERS) { o.gem.rotation.y = elapsed * 1.5; o.gem.position.y = 1.5 + Math.sin(elapsed * 2 + o.colour) * 0.12; }
     clock.textContent = clockLabel(minutes);

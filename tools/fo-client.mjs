@@ -57,5 +57,11 @@ export async function connect(configPath) {
     }
     return rows;
   }
-  return { origin, environment: config.environmentName, read };
+  /** GETs the OData service description ($metadata, XML). Large: callers should search it, not print it. */
+  async function metadata() {
+    const response = await fetch(new URL('/data/$metadata', origin), { method: 'GET', headers: { Authorization: `Bearer ${await accessToken()}` } });
+    if (!response.ok) { const error = new Error(`$metadata: HTTP ${response.status}`); error.status = response.status; throw error; }
+    return response.text();
+  }
+  return { origin, environment: config.environmentName, read, metadata };
 }

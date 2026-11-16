@@ -2,6 +2,12 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## Unreleased
+
+- **ERP connection panel** on the factory page: where the connection points (environment, URL, shortened tenant and client IDs), whether the encrypted secret is stored, and a **Test connection** button that makes one GET. The secret never reaches the page.
+- **Production order selector** in the Orders mode, grouped by status (Started, Released, Scheduled, …). Selecting an order shows only that order, loops the timeline over its jobs, brings its resources into view and fills the detail panel with quantities, route, jobs and parent order. Links can open an order directly with `?order=P000192`.
+- An order without route operations or scheduled jobs (for example a started order whose jobs were never generated) is now explained instead of being invisible: it is shown at the warehouse its BOM lines consume from.
+
 ## 0.8.4 — 2026-11-16
 
 - Fix: the **Floor** level of the factory layout editor was cut off once **Areas** was added; the level buttons now wrap onto a second line.

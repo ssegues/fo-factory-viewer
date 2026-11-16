@@ -4,11 +4,11 @@ What each coming version is meant to include. Scope can move between versions; w
 
 ## 0.9 — Warehouse and factory connected
 
-- Link production pick work to the factory floor: material leaving the warehouse page arrives at the resource on the factory page.
-- Components travel from their pick location to the input location of the consuming operation; finished goods leave from the output location.
-- Driven by warehouse work where the ERP has it, and derived from BOM lines and locations where it does not, with the two clearly told apart.
-- Stock by location in place of the decorative box fill on shelves.
-- Warehouse names and sites. The `Warehouses` entity still returns HTTP 403 for the integration user; this needs the right read privilege first.
+- **0.9.0 — Real stock (on hold).** Real on-hand stock per location in place of the decorative box fill. No public OData entity gives stock per location outside project entities: `WarehousesOnHandV2` stops at the warehouse, and `InventoryOnHandForAI` at the inventory status. Inventory Visibility cannot be installed in a trial environment. The remaining candidate is the **Inventory on-hand report storage** report, exported with Data management and read locally from the package. The ERP connection panel of this version has shipped.
+- **0.9.1 — From warehouse to machine.** Link production pick work to its production order: open the order on the factory page from the warehouse page and back, and show which work and location each material crate comes from.
+- **0.9.2 — The whole path, real or derived.** Pick location → group input location → resource → output location → finished goods. Solid where warehouse work says so, dashed where it is derived from BOM lines and group setup, with a legend. Warehouse names once the `Warehouses` entity is readable (still HTTP 403).
+- **0.9.3 — Product icons.** Material crates and stock on shelves take an icon chosen from the product name (for example screens, cables, speakers, packaging), with plain boxes only as the fallback. Rules are local and editable, like the resource models.
+- Production pick work for site 1 does not exist yet in USMF; it has to be created in the trial environment (by the user, in the ERP) to show 0.9.1 with real data.
 
 ## 1.0 — Stable release
 

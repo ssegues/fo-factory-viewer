@@ -1,7 +1,8 @@
 // Local server for the viewer. No dependencies.
 // Besides static files it offers three actions: re-reading production orders and jobs from the ERP
 // into a local snapshot, re-reading warehouse work into warehouses.json, and saving the local model mapping (visuals.json)
-// and the hand-made floor layout (layout.json). The browser never sees credentials; the read runs here and is GET-only.
+// and the hand-made floor layout (layout.json). It also reports where the connection points and can test it.
+// The browser never sees credentials; the read runs here and is GET-only.
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { access, readFile, writeFile } from 'node:fs/promises';
@@ -137,6 +138,29 @@ async function refreshWork(dataset) {
   return failed ?? { code: 200, body: await workStatus(dataset) };
 }
 
+/** What the viewer may know about the connection: where it points, never the secret. Identifiers are shortened. */
+const shorten = (id) => typeof id === 'string' && id.length > 10 ? `${id.slice(0, 4)}…${id.slice(-4)}` : (id ? '…' : null);
+async function connectionStatus() {
+  if (!(await exists(connection))) return { configured: false, reason: 'No connection file (data/local/connection.local.json).' };
+  try {
+    const c = JSON.parse(await readFile(connection, 'utf8'));
+    const secretFile = c.authentication?.secretFile;
+    return { configured: true, environmentName: c.environmentName ?? null, url: c.financeOperationsUrl ? new URL(c.financeOperationsUrl).origin : null,
+      tenant: shorten(c.tenantId), client: shorten(c.clientId), secretStored: !!secretFile && await exists(secretFile), access: 'Read only (GET)' };
+  } catch (error) { return { configured: false, reason: `The connection file could not be read: ${error.message}` }; }
+}
+/** One small GET to the ERP (a single legal entity), timed. Errors carry the server's message, never credentials. */
+async function testConnection() {
+  const status = await connectionStatus(); if (!status.configured) return { ok: false, error: status.reason };
+  const started = Date.now();
+  try {
+    const { connect } = await import('./fo-client.mjs');
+    const fo = await connect(connection);
+    const rows = await fo.read('LegalEntities', { top: 1, crossCompany: false, select: ['LegalEntityId'] });
+    return { ok: true, ms: Date.now() - started, sample: rows.length ? 'legal entities readable' : 'no legal entity returned', at: new Date().toISOString() };
+  } catch (error) { return { ok: false, ms: Date.now() - started, error: error.detail ? `${error.message}: ${error.detail}` : error.message, at: new Date().toISOString() }; }
+}
+
 /** The refresh must come from this page: same origin, plus a header a cross-site form cannot send. */
 function fromViewer(request) {
   const origin = request.headers.origin;
@@ -149,6 +173,14 @@ createServer(async (request, response) => {
   if (path === '/') {
     response.writeHead(302, { Location: '/viewer/' }).end();
     return;
+  }
+  if (path === '/api/connection') {
+    try {
+      if (request.method === 'GET') return json(response, 200, await connectionStatus());
+      if (request.method !== 'POST') return json(response, 405, { error: 'Method not allowed' });
+      if (!fromViewer(request)) return json(response, 403, { error: 'Forbidden' });
+      return json(response, 200, await testConnection());
+    } catch (error) { return json(response, 500, { error: error.message }); }
   }
   if (path === '/api/orders') {
     const dataset = url.searchParams.get('data');
