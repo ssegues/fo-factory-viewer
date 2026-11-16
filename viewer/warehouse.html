@@ -30,7 +30,8 @@
   #layoutPanel[hidden] { display:none; }
   #layoutPanel .k { color:var(--warm); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
   #layoutPanel h2 { margin:0; font-size:16px; font-weight:600; } #layoutPanel p { margin:0; color:var(--dim); line-height:1.45; }
-  #layoutPanel .acts { display:flex; gap:6px; flex-wrap:wrap; }
+  #layoutPanel .acts { display:flex; gap:6px; flex-wrap:wrap; } #layoutPanel .acts[hidden] { display:none; }
+  #layoutPanel .seg button.on { color:var(--warm); border-color:var(--warm); box-shadow:none; background:rgba(255,162,61,.12); }
   #layoutPanel .acts button { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:5px 9px; font-size:11px; cursor:pointer; }
   #layoutPanel .acts button:disabled { opacity:.4; cursor:default; }
   #layoutState { color:var(--dim); font-size:11px; }
@@ -81,7 +82,9 @@
   <div class="k mono">Local layer · never written to the ERP</div>
   <h2>Warehouse layout</h2>
   <p>Drag a rack aisle or a floor area to move it with all its locations. Dock locations stay along the dock wall. Anything you have not moved keeps its automatic place.</p>
-  <div class="acts mono"><button id="layoutUndo" disabled>Undo</button><button id="layoutResetSel" disabled>Reset selected</button><button id="layoutResetAll">Reset this warehouse</button></div>
+  <div class="seg mono" id="layoutLevel"><button data-level="blocks" class="on">Aisles and areas</button><button data-level="floor">Floor</button></div>
+  <div class="acts mono" id="moveActs"><button id="layoutUndo" disabled>Undo</button><button id="layoutResetSel" disabled>Reset selected</button><button id="layoutResetAll">Reset this warehouse</button></div>
+  <div class="acts mono" id="floorActs" hidden><button id="floorAdd">Add section</button><button id="floorRemove">Remove section</button><button id="floorUndo" disabled>Undo</button><button id="floorAuto">Automatic</button><button id="floorApply" disabled>Apply floor</button></div>
   <div id="layoutState" class="mono"></div>
 </div>
 <div id="hint" class="hud"></div>
@@ -107,6 +110,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { floorMesh, outline, bounds, contains, area, FloorEditor } from './floor.js';
 
 // ---------------------------------------------------------------- data
 // Structure comes from warehouses.json (locations, zones, profiles as set up in the ERP).
@@ -118,7 +122,8 @@ const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? reque
 document.getElementById('navFactory').href = `./?data=${dataset}`;
 fetch('../package.json').then((r) => r.ok ? r.json() : null).catch(() => null).then((pkg) => { if (pkg?.version) document.getElementById('version').textContent = 'v' + pkg.version; });
 const DATA = await fetch(`../data/${dataset}/warehouses.json`).then((r) => r.ok ? r.json() : null).catch(() => null);
-const WLAYOUT = await fetch(`../data/${dataset}/warehouse-layout.json`).then((r) => r.ok ? r.json() : null).catch(() => null);
+const WLAYOUT = await fetch(`../data/${dataset}/warehouse-layout.json`).then((r) => r.ok ? r.json() : null).catch(() => null) ??
+  (dataset.startsWith('local/') ? null : (() => { try { return { floors: JSON.parse(sessionStorage.getItem('fo-wh-floors:' + dataset)) }; } catch { return null; } })());
 if (!DATA) { document.getElementById('loading').textContent = `No warehouses.json in data/${dataset}`; throw new Error('Warehouse data missing'); }
 const whSel = document.getElementById('whSel');
 for (const w of [...DATA.warehouses].sort((a, b) => b.locations.length - a.locations.length)) whSel.add(new Option(`${w.id} · ${w.locations.length} location${w.locations.length === 1 ? '' : 's'}${w.work?.length ? ` · ${w.work.length} work` : ''}`, w.id));
@@ -251,21 +256,33 @@ docks.forEach((l, i) => {
   hall.add(flat(7, 4.8, floorTag(l.id, l.type === 'BAYDOOR' ? '#ffa23d' : '#7ff0e3', 448, 300), 5, z));
 });
 const W = Math.max(cursor, 30), zc = CROSS, maxZ = CROSS + 5.5, D = maxZ - minZ;
+// Floor shape: the automatic rectangle unless one was drawn by hand for this warehouse.
+const AUTO_FLOOR = [[-2, minZ, W + 2, maxZ]], ALL_FLOORS = { ...WLAYOUT?.floors };
+const FLOOR = Array.isArray(ALL_FLOORS[WH.id]) && ALL_FLOORS[WH.id].length ? ALL_FLOORS[WH.id] : AUTO_FLOOR;
+const [FX0, FZ0, FX1, FZ1] = bounds(FLOOR);
 hall.position.set(-W / 2, 0, -(minZ + maxZ) / 2);
 
 // Floor, cross aisle, walls.
 {
   const map = concrete.clone(); map.needsUpdate = true; map.repeat.set(W / 8, D / 8);
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 0.24, D), std(0x8e98a4, 0.92, 0.05, { map })); slab.position.set(W / 2, -0.12, (minZ + maxZ) / 2); slab.receiveShadow = true; hall.add(slab);
+  map.repeat.set(1, 1); hall.add(floorMesh(FLOOR, { y: 0, top: std(0x8e98a4, 0.92, 0.05, { map }), side: std(0x4f5862, 0.9, 0.05, { side: THREE.DoubleSide }) }));
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), std(0x1a2028, 0.95, 0)); ground.rotation.x = -Math.PI / 2; ground.position.y = -0.24; ground.receiveShadow = true; scene.add(ground);
   const stripe = (len, x, z, rot = 0) => { const m = hazard.clone(); m.needsUpdate = true; m.repeat.set(len / 0.64, 1); const s = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.3), std(0xffffff, 0.75, 0, { map: m })); s.rotation.x = -Math.PI / 2; s.rotation.z = rot; s.position.set(x, 0.012, z); hall.add(s); };
   stripe(W - 10, W / 2 + 4, zc - 2.3); stripe(W - 10, W / 2 + 4, zc + 2.3); stripe(D - 2, 10.2, (minZ + maxZ) / 2, Math.PI / 2);
   const title = paintedText(`Warehouse ${WH.id}`, 1.5, '#e9eef3', 0.5); title.position.set(12, 0.02, maxZ - 1.6); hall.add(title);
   for (const b of blockInfo) { const t = paintedText(b.text, 0.75, '#7ff0e3', 0.8); t.position.set(b.x0, 0.02, 1.1); (b.node ?? hall).add(t); }
   const wallMat = std(0x27303a, 0.8, 0.3);
-  const back = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 9, 0.6), wallMat); back.position.set(W / 2, 4.5, minZ - 0.3); back.receiveShadow = true; hall.add(back);
-  const side = new THREE.Mesh(new THREE.BoxGeometry(0.6, 9, D), wallMat); side.position.set(-2.3, 4.5, (minZ + maxZ) / 2); side.receiveShadow = true; hall.add(side);
-  for (let x = 4; x < W; x += 9) { const s = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.14, 0.08), glow(x % 18 < 9 ? 0x3dd6c6 : 0xffc98a, 2.4)); s.position.set(x, 6.4, minZ + 0.05); hall.add(s); hall.add(box(0.8, 9.4, 0.8, M.graphite, x - 4.5, 4.7, minZ + 0.1, 0.05)); }
+  // Walls on every edge that faces back or left (the dock wall among them); columns and light strips along the back ones.
+  for (const s of outline(FLOOR)) {
+    if (s.out[1] !== -1 && s.out[0] !== -1) continue;
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(s.alongX ? s.length + 0.6 : 0.6, 9, s.alongX ? 0.6 : s.length + 0.6), wallMat);
+    wall.position.set(s.mid[0] + s.out[0] * 0.3, 4.5, s.mid[1] + s.out[1] * 0.3); wall.receiveShadow = true; hall.add(wall);
+    if (!s.alongX) continue;
+    for (let x = s.a[0] + 4.5; x < s.b[0] - 2; x += 9) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.14, 0.08), glow(Math.round(x / 9) % 2 ? 0x3dd6c6 : 0xffc98a, 2.4)); strip.position.set(x, 6.4, s.a[1] + 0.05); hall.add(strip);
+      hall.add(box(0.8, 9.4, 0.8, M.graphite, x - 4.5, 4.7, s.a[1] + 0.1, 0.05));
+    }
+  }
   for (const l of docks.filter((d) => d.type === 'BAYDOOR')) {         // a dock door with a trailer backed up to it
     const z = place[l.id].pos.z;
     hall.add(box(0.2, 4.6, 4.4, M.dark, -1.95, 2.3, z, 0.02)); hall.add(box(0.3, 0.3, 4.8, M.yellow, -1.9, 4.75, z, 0.03));
@@ -306,12 +323,13 @@ let writeInstances;
   hall.add(plate, boxes); pickables.push(plate);
 }
 // Pendant lamps and fit.
-for (let x = 10; x < W; x += 18) for (const z of [minZ * 0.6, minZ * 0.2]) {
+for (let x = FX0 + 12; x < FX1; x += 18) for (const z of [FZ0 + (FZ1 - FZ0) * 0.25, FZ0 + (FZ1 - FZ0) * 0.6]) {
+  if (!contains(FLOOR, x, z)) continue;
   const lamp = new THREE.Group(); lamp.position.set(x, 9.6, z); lamp.add(cyl(0.22, 0.95, 0.5, M.graphite));
   const disc = new THREE.Mesh(new THREE.CircleGeometry(0.8, 24), glow(0xffe2b8, 3.2)); disc.rotation.x = Math.PI / 2; disc.position.y = -0.26; lamp.add(disc);
   lamp.traverse((o) => { o.castShadow = false; }); hall.add(lamp);
 }
-const reach = Math.max(W * 1.25, D * 1.9, 46);
+const reach = Math.max((FX1 - FX0) * 1.2, (FZ1 - FZ0) * 1.9, 46);
 camera.position.copy(new THREE.Vector3(0.5, 0.52, 0.72).normalize().multiplyScalar(reach)); camera.far = reach * 6; camera.updateProjectionMatrix();
 controls.maxDistance = reach * 1.8; controls.target.set(0, 1.5, 0); scene.fog.near = reach * 1.3; scene.fog.far = reach * 3.6;
 const half = Math.max(W, D) / 2 + 14; Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: half * 5 });
@@ -527,7 +545,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 const layoutPanel = document.getElementById('layoutPanel'), layoutBtn = document.getElementById('layoutBtn'), layoutState = document.getElementById('layoutState');
 const undoBtn = document.getElementById('layoutUndo'), resetSelBtn = document.getElementById('layoutResetSel');
 const canSave = dataset.startsWith('local/');
-let editing = false, drag = null, picked = null, saveTimer = null;
+let editing = false, level = 'blocks', drag = null, picked = null, saveTimer = null;
 const moves = [], floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const pickBox = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(0xffa23d).multiplyScalar(2.2)); pickBox.visible = false; scene.add(pickBox);
 const offsetOf = (node) => [...(OFF[node.userData.block.key] ?? [0, 0])];
@@ -554,7 +572,7 @@ function layoutChanged() {
   saveTimer = setTimeout(async () => {
     try {
       if (Object.keys(OFF).length) ALL_OFF[WH.id] = OFF; else delete ALL_OFF[WH.id];
-      const r = await fetch(`/api/warehouse-layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ warehouses: ALL_OFF }) });
+      const r = await fetch(`/api/warehouse-layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ warehouses: ALL_OFF, floors: ALL_FLOORS }) });
       if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
       layoutNote();
     } catch (error) { layoutNote(`Not saved: ${error.message}`); }
@@ -570,7 +588,7 @@ function nodeAt(e) {
 function floorPoint(e) { aim(e); return ray.ray.intersectPlane(floorPlane, new THREE.Vector3()); }
 // Capture phase on window: runs before the orbit controls, so a drag on a block moves it instead of the camera.
 addEventListener('pointerdown', (e) => {
-  if (!editing || e.button !== 0 || e.target !== renderer.domElement) return;
+  if (!editing || level !== 'blocks' || e.button !== 0 || e.target !== renderer.domElement) return;
   const node = nodeAt(e), p = node && floorPoint(e); if (!node || !p) return;
   picked = node; frame(node); resetSelBtn.disabled = !OFF[node.userData.block.key]; layoutNote(`${node.userData.block.text} · drag to move`);
   drag = { node, start: p, from: offsetOf(node), moved: false }; down = [e.clientX, e.clientY];
@@ -583,7 +601,7 @@ addEventListener('pointermove', (e) => {
   let dx = snap(drag.from[0] + p.x - drag.start.x), dz = snap(drag.from[1] + p.z - drag.start.z);
   // Keep the block on the warehouse floor (between the dock lane and the far wall).
   const [x0, z0, x1, z1] = drag.node.userData.footprint;
-  dx = Math.min(Math.max(dx, 11 - x0), W + 1 - x1); dz = Math.min(Math.max(dz, minZ + 0.8 - z0), maxZ - 1 - z1);
+  dx = Math.min(Math.max(dx, Math.max(11, FX0 + 1) - x0), FX1 - 1 - x1); dz = Math.min(Math.max(dz, FZ0 + 0.8 - z0), FZ1 - 1 - z1);
   if (!drag.moved && Math.hypot(dx - drag.from[0], dz - drag.from[1]) < 0.5) return;
   drag.moved = true; move(drag.node, dx, dz); frame(drag.node);
   layoutNote(`${drag.node.userData.block.text} · ${dx >= 0 ? '+' : ''}${dx} m, ${dz >= 0 ? '+' : ''}${dz} m`);
@@ -602,8 +620,50 @@ document.getElementById('layoutResetAll').addEventListener('click', () => {
 layoutBtn.addEventListener('click', () => {
   editing = !editing; layoutPanel.hidden = !editing; layoutBtn.classList.toggle('on', editing); document.body.classList.toggle('editing', editing);
   if (!editing) { picked = null; frame(null); }
-  placeWorkPanel(); layoutNote();
+  placeWorkPanel(); layoutNote(); floorMode();
 });
+document.querySelectorAll('#layoutLevel button').forEach((b) => b.addEventListener('click', () => {
+  level = b.dataset.level; document.querySelectorAll('#layoutLevel button').forEach((x) => x.classList.toggle('on', x === b));
+  picked = null; frame(null); floorMode(); if (level !== 'floor') layoutNote(); placeWorkPanel();
+}));
+// ---- floor shape (same editor as the factory page): Apply saves it and rebuilds walls and lamps around it.
+const floorEditor = new FloorEditor({ parent: hall, camera, canvas: renderer.domElement, controls, y: 0.05,
+  onChange: (rects, done, before) => { if (done) { floorUndo.push(before); floorDirty = true; } floorNote(); }, onSelect: () => floorNote() });
+const floorUndo = []; let floorDirty = false;
+const floorBtns = Object.fromEntries(['floorAdd', 'floorRemove', 'floorUndo', 'floorAuto', 'floorApply'].map((id) => [id, document.getElementById(id)]));
+floorEditor.setRects(FLOOR);
+const outsideFloor = (rects) => Object.values(place).filter((e) => !e.dock && !contains(rects, e.pos.x, e.pos.z)).map((e) => e.location.id);
+function floorNote() {
+  const r = floorEditor.rects, out = outsideFloor(r), [x0, z0, x1, z1] = r[floorEditor.selected] ?? [0, 0, 0, 0];
+  layoutState.textContent = `${r.length} section${r.length === 1 ? '' : 's'} · ${Math.round(area(r))} m² · selected ${+(x1 - x0).toFixed(1)} × ${+(z1 - z0).toFixed(1)} m` +
+    (out.length ? ` · ${out.length} location${out.length === 1 ? '' : 's'} outside the floor` : '') + (floorDirty ? ' · Apply to rebuild walls and lights' : '');
+  layoutState.style.color = out.length ? 'var(--warm)' : '';
+  floorBtns.floorUndo.disabled = !floorUndo.length; floorBtns.floorApply.disabled = !floorDirty; floorBtns.floorRemove.disabled = r.length < 2;
+}
+function floorMode() {
+  const on = editing && level === 'floor';
+  floorEditor.enable(on); document.getElementById('floorActs').hidden = level !== 'floor'; document.getElementById('moveActs').hidden = level === 'floor';
+  if (on) floorNote();
+}
+floorBtns.floorAdd.addEventListener('click', () => { floorUndo.push(floorEditor.rects.map((r) => [...r])); floorEditor.add(); floorDirty = true; floorNote(); });
+floorBtns.floorRemove.addEventListener('click', () => { const before = floorEditor.rects.map((r) => [...r]); if (floorEditor.remove()) { floorUndo.push(before); floorDirty = true; } floorNote(); });
+floorBtns.floorUndo.addEventListener('click', () => { const prev = floorUndo.pop(); if (!prev) return; floorEditor.setRects(prev); floorDirty = true; floorNote(); });
+floorBtns.floorAuto.addEventListener('click', () => { floorUndo.push(floorEditor.rects.map((r) => [...r])); floorEditor.setRects(AUTO_FLOOR); floorDirty = true; floorNote(); });
+floorBtns.floorApply.addEventListener('click', async () => {
+  const rects = floorEditor.rects, out = outsideFloor(rects);
+  if (out.length && !confirm(`${out.length} location${out.length === 1 ? ' is' : 's are'} outside the new floor. Apply anyway?`)) return;
+  const auto = rects.length === 1 && rects[0].every((v, i) => Math.abs(v - AUTO_FLOOR[0][i]) < 0.01);
+  if (auto) delete ALL_FLOORS[WH.id]; else ALL_FLOORS[WH.id] = rects;
+  const u = new URL(location.href); u.searchParams.set('wh', WH.id); u.searchParams.set('flow', currentFlow); u.searchParams.set('edit', 'floor');
+  if (!canSave) { try { sessionStorage.setItem('fo-wh-floors:' + dataset, JSON.stringify(ALL_FLOORS)); } catch {} location.href = u.toString(); return; }
+  layoutState.textContent = 'Saving floor…';
+  try {
+    const r = await fetch(`/api/warehouse-layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ warehouses: ALL_OFF, floors: ALL_FLOORS }) });
+    if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+    location.href = u.toString();
+  } catch (error) { layoutState.textContent = `Not saved: ${error.message}`; }
+});
+if (params.get('edit') === 'floor') { layoutBtn.click(); document.querySelector('#layoutLevel [data-level="floor"]').click(); }
 // Keep the work list below the header, which wraps on narrow screens.
 const placeWorkPanel = () => {
   const top = Math.round(document.getElementById('top').getBoundingClientRect().bottom + 10), panel = document.getElementById('layoutPanel');

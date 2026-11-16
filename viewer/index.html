@@ -44,7 +44,7 @@
   #layoutPanel .k { color:var(--warm); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
   #layoutPanel h2 { margin:0; font-size:16px; font-weight:600; } #layoutPanel p { margin:0; color:var(--dim); line-height:1.45; }
   #layoutPanel .seg button.on { color:var(--warm); border-color:var(--warm); }
-  #layoutPanel .acts { display:flex; gap:6px; flex-wrap:wrap; }
+  #layoutPanel .acts { display:flex; gap:6px; flex-wrap:wrap; } #layoutPanel .acts[hidden] { display:none; }
   #layoutPanel .acts button { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:5px 9px; font-size:11px; cursor:pointer; }
   #layoutPanel .acts button:disabled { opacity:.4; cursor:default; }
   #layoutState { color:var(--dim); font-size:11px; }
@@ -123,8 +123,9 @@
   <div class="k mono">Local layer · never written to the ERP</div>
   <h2>Floor layout</h2>
   <p>Drag on the floor to move what you pick. Groups move with their resources, units with their groups. Anything you have not moved keeps its automatic place.</p>
-  <div class="seg mono" id="layoutLevel"><button data-level="resources" class="on">Resources</button><button data-level="groups">Groups</button><button data-level="units">Units</button></div>
-  <div class="acts mono"><button id="layoutUndo" disabled>Undo</button><button id="layoutResetSel" disabled>Reset selected</button><button id="layoutResetAll">Reset all</button></div>
+  <div class="seg mono" id="layoutLevel"><button data-level="resources" class="on">Resources</button><button data-level="groups">Groups</button><button data-level="units">Units</button><button data-level="floor">Floor</button></div>
+  <div class="acts mono" id="floorActs" hidden><button id="floorAdd">Add section</button><button id="floorRemove">Remove section</button><button id="floorUndo" disabled>Undo</button><button id="floorAuto">Automatic</button><button id="floorApply" disabled>Apply floor</button></div>
+  <div class="acts mono" id="moveActs"><button id="layoutUndo" disabled>Undo</button><button id="layoutResetSel" disabled>Reset selected</button><button id="layoutResetAll">Reset all</button></div>
   <div id="layoutState" class="mono"></div>
 </div>
 <div id="demo" class="mono">Illustrative data · visual prototype</div>
@@ -158,6 +159,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { floorMesh, outline, bounds, contains, area, FloorEditor } from './floor.js';
 
 // ---------------------------------------------------------------- data
 // The viewer never talks to the ERP. It reads a snapshot (the manufacturing model as extracted)
@@ -879,8 +881,19 @@ for (const g of SNAP.resourceGroups) for (const [role, at] of [['Input of', g.in
 const productionWarehouses = (WAREHOUSES?.warehouses ?? []).filter((w) => usedBy[w.id]);
 const STRIP = productionWarehouses.length ? 8.5 : 0, OZ = STRIP / 2;
 const siteD = Math.max(...SITE.units.map((u) => u.d)) + 6 + STRIP;
-world.add(slab(siteW, siteD, 0.24, 0.24, 0x8e98a4));
-border(world, siteW - 0.5, siteD - 0.5, 0, 0.245, 0);
+// Floor shape: the automatic rectangle unless a shape was drawn by hand (layout.json; session storage for the sample).
+const AUTO_FLOOR = [[-siteW / 2, -siteD / 2, siteW / 2, siteD / 2]];
+const storedFloor = dataset.startsWith('local/') ? LAYOUT?.floor : (() => { try { return JSON.parse(sessionStorage.getItem('fo-floor:' + dataset)); } catch { return null; } })();
+const FLOOR = Array.isArray(storedFloor) && storedFloor.length ? storedFloor : AUTO_FLOOR, CUSTOM_FLOOR = FLOOR !== AUTO_FLOOR;
+const [FX0, FZ0, FX1, FZ1] = bounds(FLOOR), FW = FX1 - FX0, FD = FZ1 - FZ0, FCX = (FX0 + FX1) / 2, FCZ = (FZ0 + FZ1) / 2;
+{
+  const top = concrete.clone(); top.needsUpdate = true; top.repeat.set(1, 1);
+  world.add(floorMesh(FLOOR, { y: 0.24, top: std(0x8e98a4, 0.92, 0.05, { map: top }), side: std(0x4f5862, 0.9, 0.05, { side: THREE.DoubleSide }) }));
+  for (const s of outline(FLOOR)) {
+    const st = stripe(Math.max(0.3, s.length - 0.5)); st.position.set(s.mid[0] - s.out[0] * 0.25, 0.245, s.mid[1] - s.out[1] * 0.25);
+    if (!s.alongX) st.rotation.z = Math.PI / 2; world.add(st);
+  }
+}
 
 const KIND = { Personnel: 'Manual workstation', Vendor: 'Subcontractor', Machine: 'Machine' };
 let cursorX = -siteW / 2 + PAD + 2;
@@ -947,13 +960,14 @@ function syncPositions() {
 }
 syncPositions();
 // Fit camera, fog and shadows to the generated floor.
-const reach = Math.max(siteW * 1.15, siteD * 1.9);
-camera.position.copy(new THREE.Vector3(0.52, 0.5, 0.72).normalize().multiplyScalar(reach));
+const reach = Math.max(FW * 1.15, FD * 1.9);
+camera.position.copy(new THREE.Vector3(0.52, 0.5, 0.72).normalize().multiplyScalar(reach)).add(new THREE.Vector3(FCX, 0, FCZ)); controls.target.set(FCX + 1, 1.5, FCZ + 1);
 camera.far = reach * 6; camera.updateProjectionMatrix();
 controls.maxDistance = reach * 1.8; scene.fog.near = reach * 1.3; scene.fog.far = reach * 3.6;
-const half = Math.max(siteW, siteD) / 2 + 16;
+const half = Math.max(FW, FD) / 2 + 16;
 Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, far: half * 5 });
-sun.position.set(half * 0.55, half * 1.1, half * 0.7); sun.shadow.camera.updateProjectionMatrix();
+sun.target.position.set(FCX, 0, FCZ); scene.add(sun.target);
+sun.position.set(FCX + half * 0.55, half * 1.1, FCZ + half * 0.7); sun.shadow.camera.updateProjectionMatrix();
 
 // ---------------------------------------------------------------- environment: hall walls, pipes, props
 function pallet(g, x, z, n, y = 0) {
@@ -1005,8 +1019,12 @@ function buildWall(len, h = 10) {
   }
   return g;
 }
-const back = buildWall(siteW + 2); back.position.set(0, 0, -siteD / 2 - 0.5); world.add(back);
-const side = buildWall(siteD + 2); side.rotation.y = Math.PI / 2; side.position.set(-siteW / 2 - 0.5, 0, 0); world.add(side);
+// Walls stand on every edge of the floor that faces back or left; the front and right stay open to the camera.
+for (const s of outline(FLOOR)) {
+  if (s.out[1] !== -1 && s.out[0] !== -1) continue;
+  const wall = buildWall(s.length + 1); wall.position.set(s.mid[0] + s.out[0] * 0.5, 0, s.mid[1] + s.out[1] * 0.5);
+  if (!s.alongX) wall.rotation.y = Math.PI / 2; world.add(wall);
+}
 
 const props = new THREE.Group(); props.position.y = 0.24; world.add(props);
 function makePad(x, text) {
@@ -1057,10 +1075,12 @@ const ambient = [];
   const fade = canvasTexture(4, 64, (g) => { const r = g.createLinearGradient(0, 0, 0, 64); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.55, 'rgba(255,255,255,.25)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, 4, 64); }, false);
   const cable = new THREE.MeshBasicMaterial({ color: 0x0c1014, transparent: true, opacity: 0.45 });
   const coneMat = new THREE.MeshBasicMaterial({ map: fade, color: 0xffd9a0, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
-  const xs = [], zs = [-siteD / 4, siteD / 4]; const nx = Math.max(2, Math.round(siteW / 22));
-  for (let i = 0; i < nx; i++) xs.push(-siteW / 2 + ((i + 0.5) * siteW) / nx);
+  const xs = [], zs = []; const nx = Math.max(2, Math.round(FW / 22)), nz = Math.max(2, Math.round(FD / 26));
+  for (let i = 0; i < nx; i++) xs.push(FX0 + ((i + 0.5) * FW) / nx);
+  for (let i = 0; i < nz; i++) zs.push(FZ0 + ((i + 0.5) * FD) / nz);
   let lit = 0;
   for (const x of xs) for (const z of zs) {
+    if (!contains(FLOOR, x, z)) continue;
     const lamp = new THREE.Group(); lamp.position.set(x, 9.4, z);
     lamp.add(cyl(0.014, 0.014, 9, cable, 0, 4.7, 0, 6)); lamp.add(cyl(0.22, 0.95, 0.5, M.graphite, 0, 0, 0, 24));
     const disc = new THREE.Mesh(new THREE.CircleGeometry(0.8, 24), glow(0xffe2b8, 3.2)); disc.rotation.x = Math.PI / 2; disc.position.y = -0.26; lamp.add(disc);
@@ -1070,19 +1090,20 @@ const ambient = [];
   }
   // Dust drifting through the light.
   const N = 420, pos = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) pos.set([(rnd() - 0.5) * siteW, 0.8 + rnd() * 8.5, (rnd() - 0.5) * siteD], i * 3);
+  for (let i = 0; i < N; i++) pos.set([FCX + (rnd() - 0.5) * FW, 0.8 + rnd() * 8.5, FCZ + (rnd() - 0.5) * FD], i * 3);
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   const dust = new THREE.Points(geo, new THREE.PointsMaterial({ map: softDot, color: 0xffe9cf, size: 0.16, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }));
   world.add(dust); ambient.push((dt, t) => { dust.position.set(Math.sin(t * 0.05) * 3, Math.sin(t * 0.11) * 0.6, Math.cos(t * 0.04) * 3); });
 
   // Logistics lane in front of the hall: tugger trains loop on it, people walk beside it.
-  const z0 = siteD / 2 + 6.5, L = siteW / 2 - 5;
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(siteW + 16, 8.4), std(0x14181d, 0.9, 0)); road.rotation.x = -Math.PI / 2; road.position.set(0, 0.012, z0); road.receiveShadow = true; world.add(road);
+  const lane = new THREE.Group(); lane.position.x = FCX; world.add(lane);
+  const z0 = FZ1 + 6.5, L = FW / 2 - 5;
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(FW + 16, 8.4), std(0x14181d, 0.9, 0)); road.rotation.x = -Math.PI / 2; road.position.set(0, 0.012, z0); road.receiveShadow = true; lane.add(road);
   const paint = new THREE.MeshBasicMaterial({ color: 0xcfd6dc, transparent: true, opacity: 0.5 }), green = new THREE.MeshBasicMaterial({ color: 0x2fae73, transparent: true, opacity: 0.45 });
-  const mark = (w, d, x, z, m = paint) => { const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), m); p.rotation.x = -Math.PI / 2; p.position.set(x, 0.02, z); world.add(p); };
-  for (const dz of [-4.1, 4.1]) mark(siteW + 16, 0.16, 0, z0 + dz);
+  const mark = (w, d, x, z, m = paint) => { const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), m); p.rotation.x = -Math.PI / 2; p.position.set(x, 0.02, z); lane.add(p); };
+  for (const dz of [-4.1, 4.1]) mark(FW + 16, 0.16, 0, z0 + dz);
   for (let x = -L; x <= L; x += 4) mark(1.8, 0.14, x, z0);
-  mark(siteW + 4, 1.5, 0, z0 - 5.4, green);
+  mark(FW + 4, 1.5, 0, z0 - 5.4, green);
   const loop = new THREE.CatmullRomCurve3([[-L, -1.9], [L, -1.9], [L + 3, 0], [L, 1.9], [-L, 1.9], [-L - 3, 0]].map(([x, z]) => new THREE.Vector3(x, 0.02, z0 + z)), true, 'catmullrom', 0.3);
   const length = loop.getLength();
   function tugger(crates) {
@@ -1100,14 +1121,14 @@ const ambient = [];
       else { t.add(box(1.3, 0.3, 0.9, M.teal, 0, 0.57, 0, 0.04)); t.add(box(0.9, 0.25, 0.7, M.steel, 0, 0.85, 0, 0.04)); }
       bodies.push(t);
     }
-    bodies.forEach((b) => world.add(b)); return { bodies, beacon };
+    bodies.forEach((b) => lane.add(b)); return { bodies, beacon };
   }
   [[tugger(['crate', 'drums']), 0], [tugger(['parts', 'crate', 'crate']), 0.52]].forEach(([train, phase]) => ambient.push((dt, t) => {
     train.bodies.forEach((b, i) => { const u = (((t * 3.2) / length + phase - (i * 2.25) / length) % 1 + 1) % 1, tan = loop.getTangentAt(u); b.position.copy(loop.getPointAt(u)); b.rotation.y = Math.atan2(-tan.z, tan.x); });
     train.beacon.material.emissiveIntensity = Math.sin(t * 7) > 0 ? 5 : 0.6;
   }));
   [[0, 1.5, -5.7], [0.37, 1.2, -5.1], [0.71, 1.35, -5.5]].forEach(([phase, pace, dz]) => {
-    const w = makeWorker(phase > 0.3); w.scale.setScalar(1.3); world.add(w);
+    const w = makeWorker(phase > 0.3); w.scale.setScalar(1.3); lane.add(w);
     ambient.push((dt, t) => {
       const span = L * 2, d = (t * pace + phase * span * 2) % (span * 2), fwd = d < span, { legs, arms, elbows, torso, head, tablet } = w.userData, s = t * pace * 4.2;
       w.position.set(fwd ? -L + d : L - (d - span), 0.02 + Math.abs(Math.sin(s)) * 0.035, z0 + dz); w.rotation.y = fwd ? Math.PI / 2 : -Math.PI / 2;
@@ -1501,7 +1522,7 @@ function layoutChanged() {
   layoutNote('Saving…'); clearTimeout(layoutTimer);
   layoutTimer = setTimeout(async () => {
     try {
-      const r = await fetch(`/api/layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(OFF) });
+      const r = await fetch(`/api/layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...OFF, floor: CUSTOM_FLOOR ? FLOOR : null }) });
       if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
       layoutNote();
     } catch (error) { layoutNote(`Not saved: ${error.message}`); }
@@ -1533,11 +1554,11 @@ addEventListener('pointerdown', (e) => {
 addEventListener('pointermove', (e) => {
   if (!drag) return;
   const p = floorPoint(e); if (!p) return;
-  const snap = (v) => Math.round(v * 2) / 2, half = [siteW / 2, siteD / 2];
+  const snap = (v) => Math.round(v * 2) / 2, half = [FW / 2, FD / 2];
   let dx = snap(drag.from[0] + p.x - drag.start.x), dz = snap(drag.from[1] + p.z - drag.start.z);
   // Keep the item's centre on the site floor.
   const c = new THREE.Vector3(); new THREE.Box3().setFromObject(drag.node).getCenter(c);
-  const cur = offsetOf(drag.node), cx = c.x + dx - cur[0], cz = c.z + dz - cur[1];
+  const cur = offsetOf(drag.node), cx = c.x + dx - cur[0] - FCX, cz = c.z + dz - cur[1] - FCZ;
   dx -= Math.max(0, cx - half[0] + 2) + Math.min(0, cx + half[0] - 2); dz -= Math.max(0, cz - half[1] + 2) + Math.min(0, cz + half[1] - 2);
   if (!drag.moved && Math.hypot(dx - drag.from[0], dz - drag.from[1]) < 0.5) return;
   drag.moved = true; place(drag.node, dx, dz); frame(drag.node);
@@ -1558,15 +1579,61 @@ document.getElementById('layoutResetAll').addEventListener('click', () => {
 });
 document.querySelectorAll('#layoutLevel button').forEach((b) => b.addEventListener('click', () => {
   level = b.dataset.level; document.querySelectorAll('#layoutLevel button').forEach((x) => x.classList.toggle('on', x === b));
-  picked = null; frame(null); resetSelBtn.disabled = true; layoutNote();
+  picked = null; frame(null); resetSelBtn.disabled = true; floorMode(); if (level !== 'floor') layoutNote();
 }));
 layoutBtn.addEventListener('click', () => {
   editing = !editing; layoutPanel.hidden = !editing; layoutBtn.classList.toggle('on', editing); document.body.classList.toggle('editing', editing);
   if (editing && !mapPanel.hidden) mapBtn.click();
   if (!editing) { picked = null; frame(null); }
-  layoutNote();
+  layoutNote(); floorMode();
 });
 mapBtn.addEventListener('click', () => { if (!mapPanel.hidden && editing) layoutBtn.click(); });
+
+// ---- floor shape: sections are drawn over the floor; Apply saves the shape and rebuilds the hall around it.
+const floorEditor = new FloorEditor({ parent: world, camera, canvas: renderer.domElement, controls, y: 0.3,
+  onChange: (rects, done, before) => { if (done) { floorUndo.push(before); floorDirty = true; } floorNote(); }, onSelect: () => floorNote() });
+const floorUndo = []; let floorDirty = false;
+const floorBtns = Object.fromEntries(['floorAdd', 'floorRemove', 'floorUndo', 'floorAuto', 'floorApply'].map((id) => [id, document.getElementById(id)]));
+floorEditor.setRects(FLOOR);
+function outsideFloor(rects) {
+  const out = [];
+  for (const [kind, nodes] of Object.entries(layoutNodes)) if (kind !== 'units') for (const node of Object.values(nodes)) {
+    if (kind === 'groups' && !node.userData.footprint) continue;
+    const p = node.getWorldPosition(new THREE.Vector3()), b = node.userData.layout.base, f = node.userData.footprint;
+    const cx = kind === 'resources' ? p.x : f[0] + p.x - b.x, cz = kind === 'resources' ? p.z : f[1] + p.z - b.z;
+    if (!contains(rects, cx, cz)) out.push(node.userData.layout.id);
+  }
+  return out;
+}
+function floorNote() {
+  const r = floorEditor.rects, out = outsideFloor(r), [x0, z0, x1, z1] = r[floorEditor.selected] ?? [0, 0, 0, 0];
+  layoutState.textContent = `${r.length} section${r.length === 1 ? '' : 's'} · ${Math.round(area(r))} m² · selected ${+(x1 - x0).toFixed(1)} × ${+(z1 - z0).toFixed(1)} m` +
+    (out.length ? ` · outside the floor: ${out.slice(0, 4).join(', ')}${out.length > 4 ? '…' : ''}` : '') + (floorDirty ? ' · Apply to rebuild walls and lights' : '');
+  layoutState.style.color = out.length ? 'var(--warm)' : '';
+  floorBtns.floorUndo.disabled = !floorUndo.length; floorBtns.floorApply.disabled = !floorDirty; floorBtns.floorRemove.disabled = r.length < 2;
+}
+function floorMode() {
+  const on = editing && level === 'floor';
+  floorEditor.enable(on); document.getElementById('floorActs').hidden = level !== 'floor'; document.getElementById('moveActs').hidden = level === 'floor';
+  if (on) floorNote();
+}
+floorBtns.floorAdd.addEventListener('click', () => { floorUndo.push(floorEditor.rects.map((r) => [...r])); floorEditor.add(); floorDirty = true; floorNote(); });
+floorBtns.floorRemove.addEventListener('click', () => { const before = floorEditor.rects.map((r) => [...r]); if (floorEditor.remove()) { floorUndo.push(before); floorDirty = true; } floorNote(); });
+floorBtns.floorUndo.addEventListener('click', () => { const prev = floorUndo.pop(); if (!prev) return; floorEditor.setRects(prev); floorDirty = true; floorNote(); });
+floorBtns.floorAuto.addEventListener('click', () => { floorUndo.push(floorEditor.rects.map((r) => [...r])); floorEditor.setRects(AUTO_FLOOR); floorDirty = true; floorNote(); });
+floorBtns.floorApply.addEventListener('click', async () => {
+  const rects = floorEditor.rects, out = outsideFloor(rects);
+  if (out.length && !confirm(`${out.length} item${out.length === 1 ? ' is' : 's are'} outside the new floor (${out.slice(0, 5).join(', ')}). Apply anyway?`)) return;
+  const auto = rects.length === 1 && rects[0].every((v, i) => Math.abs(v - AUTO_FLOOR[0][i]) < 0.01), shape = auto ? null : rects;
+  if (!canSave) { try { if (shape) sessionStorage.setItem('fo-floor:' + dataset, JSON.stringify(shape)); else sessionStorage.removeItem('fo-floor:' + dataset); } catch {} const u = new URL(location.href); u.searchParams.set('edit', 'floor'); location.href = u.toString(); return; }
+  layoutState.textContent = 'Saving floor…';
+  try {
+    const r = await fetch(`/api/layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...OFF, floor: shape }) });
+    if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+    const u = new URL(location.href); u.searchParams.set('edit', 'floor'); location.href = u.toString();
+  } catch (error) { layoutState.textContent = `Not saved: ${error.message}`; }
+});
+if (new URLSearchParams(location.search).get('edit') === 'floor') { layoutBtn.click(); document.querySelector('#layoutLevel [data-level="floor"]').click(); }
 
 function resize() {
   const w = innerWidth, h = innerHeight;

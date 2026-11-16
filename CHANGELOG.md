@@ -2,6 +2,13 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.8.2 — 2026-11-16
+
+- **Floor size and shape**, on both pages. In the layout editor, the new **Floor** level draws the floor as sections: drag a section to move it, drag its corner or edge handles to resize it, add sections for an L, T or U shaped hall or an annex, or go back to the automatic rectangle. **Apply floor** saves the shape and rebuilds the hall around it: walls on the back- and left-facing edges, edge markings, lamps, the logistics lane and the camera framing.
+- The editor reports machines, groups or warehouse locations left outside the new floor before applying.
+- Shapes are saved with the layout (`layout.json`, and per warehouse in `warehouse-layout.json`); the local server validates them. With the sample data set they last for the browser session.
+- `viewer/floor.js` is the first module shared by both pages.
+
 ## 0.8.1 — 2026-11-16
 
 - **Manual warehouse layout.** A **Layout** button on the warehouse page moves whole rack aisles and floor areas, with all their locations. Dock locations stay along the dock wall. Undo, reset of the selected block or of the whole warehouse, and an overlap warning, as on the factory page.

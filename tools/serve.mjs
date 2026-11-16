@@ -67,7 +67,20 @@ function cleanLayout(input) {
     }
     return out;
   };
-  return { note: 'Local presentation layer: offsets in metres from the automatic layout. Never written back to the ERP.', version: 1, units: map(input.units), groups: map(input.groups), resources: map(input.resources) };
+  const out = { note: 'Local presentation layer: offsets in metres from the automatic layout. Never written back to the ERP.', version: 1, units: map(input.units), groups: map(input.groups), resources: map(input.resources) };
+  const floor = cleanFloor(input.floor); if (floor) out.floor = floor;
+  return out;
+}
+/** A floor shape: up to 24 rectangles [x0, z0, x1, z1] in metres; absent means the automatic rectangle. */
+function cleanFloor(value) {
+  if (value == null) return null;
+  if (!Array.isArray(value) || !value.length || value.length > 24) throw new Error('A floor shape needs 1 to 24 sections.');
+  return value.map((r) => {
+    if (!Array.isArray(r) || r.length !== 4 || !r.every((v) => Number.isFinite(v) && Math.abs(v) <= 2000)) throw new Error('Invalid floor section.');
+    const [x0, z0, x1, z1] = r.map((v) => Math.round(v * 10) / 10);
+    if (x1 - x0 < 1 || z1 - z0 < 1) throw new Error('Floor sections must be at least 1 m wide.');
+    return [x0, z0, x1, z1];
+  });
 }
 /** Hand-made warehouse layout: per warehouse, offsets in metres of rack aisles and floor areas. */
 function cleanWarehouseLayout(input) {
@@ -79,7 +92,10 @@ function cleanWarehouseLayout(input) {
     const cleaned = cleanLayout({ resources: blocks }).resources;
     if (Object.keys(cleaned).length) warehouses[id] = cleaned;
   }
-  return { note: 'Local presentation layer: offsets in metres of rack aisles and floor areas from the automatic warehouse layout. Never written back to the ERP.', version: 1, warehouses };
+  const floors = {}, shapes = Object.entries(input.floors && typeof input.floors === 'object' ? input.floors : {});
+  if (shapes.length > 500) throw new Error('Too many warehouses.');
+  for (const [id, shape] of shapes) { if (id.length > 40) throw new Error('Warehouse identifier too long.'); const f = cleanFloor(shape); if (f) floors[id] = f; }
+  return { note: 'Local presentation layer: offsets in metres of rack aisles and floor areas, and floor shapes, for the automatic warehouse layout. Never written back to the ERP.', version: 1, warehouses, floors };
 }
 async function readBody(request, limit = 200_000) {
   const chunks = []; let size = 0;
