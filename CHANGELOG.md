@@ -2,6 +2,10 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.8.4 — 2026-11-16
+
+- Fix: the **Floor** level of the factory layout editor was cut off once **Areas** was added; the level buttons now wrap onto a second line.
+
 ## 0.8.3 — 2026-11-16
 
 - **Movable logistics areas** on the factory floor. A new **Areas** level in the layout editor moves the raw material area, the finished goods area and each production warehouse of the strip at the back, with their pallets and painted locations.
