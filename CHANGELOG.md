@@ -2,6 +2,13 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.8.0 — 2026-11-16
+
+- **Manual layout.** A **Layout** button on the factory page opens an editor: drag resources, resource groups or whole production units across the floor. Groups move with their resources and units with their groups. Moves snap to half a metre, stay on the site floor, and can be undone or reset.
+- Routes, material lanes and production order paths follow the new positions at once.
+- Positions are saved per data set in `data/<set>/layout.json` as offsets from the automatic layout, so anything not moved, including resources that appear in a later extract, keeps its automatic place. The local server validates the file; the sample data set is never written.
+- Overlapping units, groups or resources are reported in the editor, not blocked.
+
 ## 0.7.1 — 2026-11-15
 
 - The project is renamed **FO Factory Viewer** (previously FactoryOps Lab), to avoid confusion with an existing commercial product.

@@ -37,6 +37,18 @@
   #mapBtn.on { color:var(--accent); border-color:var(--accent); }
   #mapPanel { top:136px; left:16px; width:400px; max-height:calc(100vh - 230px); padding:14px 16px; display:flex; flex-direction:column; gap:8px; font-size:12px; }
   #mapPanel[hidden] { display:none; }
+  #layoutBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; }
+  #layoutBtn.on { color:var(--warm); border-color:var(--warm); }
+  #layoutPanel { top:136px; left:16px; width:340px; padding:14px 16px; display:flex; flex-direction:column; gap:9px; font-size:12px; }
+  #layoutPanel[hidden] { display:none; }
+  #layoutPanel .k { color:var(--warm); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
+  #layoutPanel h2 { margin:0; font-size:16px; font-weight:600; } #layoutPanel p { margin:0; color:var(--dim); line-height:1.45; }
+  #layoutPanel .seg button.on { color:var(--warm); border-color:var(--warm); }
+  #layoutPanel .acts { display:flex; gap:6px; flex-wrap:wrap; }
+  #layoutPanel .acts button { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:5px 9px; font-size:11px; cursor:pointer; }
+  #layoutPanel .acts button:disabled { opacity:.4; cursor:default; }
+  #layoutState { color:var(--dim); font-size:11px; }
+  body.editing #stage canvas { cursor:grab; } body.editing.dragging #stage canvas { cursor:grabbing; }
   #mapPanel .k { color:var(--accent); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
   #mapPanel h2 { margin:0; font-size:16px; font-weight:600; } #mapPanel p { margin:0; color:var(--dim); }
   #mapPanel h3 { margin:8px 0 2px; font-size:10px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:1.4px; }
@@ -94,6 +106,7 @@
   <button id="emptyBtn" class="mono"></button>
   <button id="matBtn" class="mono on">Material</button>
   <button id="mapBtn" class="mono">Models</button>
+  <button id="layoutBtn" class="mono">Layout</button>
   <button id="refreshBtn" class="mono" hidden></button>
 </div>
 <div id="hint" class="hud"></div>
@@ -105,6 +118,14 @@
   <input id="mapFilter" class="mono" type="search" placeholder="Filter resources…" />
   <div id="mapList"></div>
   <div id="mapState" class="mono"></div>
+</div>
+<div id="layoutPanel" class="hud" hidden>
+  <div class="k mono">Local layer · never written to the ERP</div>
+  <h2>Floor layout</h2>
+  <p>Drag on the floor to move what you pick. Groups move with their resources, units with their groups. Anything you have not moved keeps its automatic place.</p>
+  <div class="seg mono" id="layoutLevel"><button data-level="resources" class="on">Resources</button><button data-level="groups">Groups</button><button data-level="units">Units</button></div>
+  <div class="acts mono"><button id="layoutUndo" disabled>Undo</button><button id="layoutResetSel" disabled>Reset selected</button><button id="layoutResetAll">Reset all</button></div>
+  <div id="layoutState" class="mono"></div>
 </div>
 <div id="demo" class="mono">Illustrative data · visual prototype</div>
 
@@ -145,7 +166,7 @@ const requested = new URLSearchParams(location.search).get('data') ?? 'sample';
 const SHOW_EMPTY = new URLSearchParams(location.search).get('empty') === '1';
 const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? requested : 'sample';
 async function loadJson(name) { const r = await fetch(`../data/${dataset}/${name}.json`); return r.ok ? r.json() : null; }
-const [SNAP, VISUALS, WAREHOUSES] = await Promise.all([loadJson('snapshot'), loadJson('visuals'), loadJson('warehouses')]);
+const [SNAP, VISUALS, WAREHOUSES, LAYOUT] = await Promise.all([loadJson('snapshot'), loadJson('visuals'), loadJson('warehouses'), loadJson('layout')]);
 if (!SNAP) { document.getElementById('loading').textContent = `No snapshot found in data/${dataset}`; throw new Error('Snapshot missing'); }
 
 const isPerson = (r) => r.type === 'Personnel';
@@ -822,6 +843,15 @@ function poseWorker(w, t, on) {
 const CELL = 7.6, ROW = 10.6, LEVEL = 0.36, AISLE = 3.2, LANE = 5.3, PER_ROW = 3, UNIT_MAX = 38;
 const world = new THREE.Group(); scene.add(world);
 const machines = {}, groupsById = {}, pickables = [], spinners = [];
+// Hand-made layout (layout.json): offsets in metres from the automatic place, per unit, group and resource.
+// Every unit, group and resource is built inside its own node, so an offset simply moves the node.
+const OFF = { units: { ...LAYOUT?.units }, groups: { ...LAYOUT?.groups }, resources: { ...LAYOUT?.resources } };
+const layoutNodes = { units: {}, groups: {}, resources: {} };
+function layoutNode(kind, id, parent, base = new THREE.Vector3()) {
+  const node = parent === world ? new THREE.Group() : parent; node.userData.layout = { kind, id, base: base.clone() };
+  const [dx, dz] = OFF[kind][id] ?? [0, 0]; node.position.set(base.x + dx, base.y, base.z + dz);
+  layoutNodes[kind][id] = node; return node;
+}
 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), std(0x222932, 0.95, 0, { map: (() => { const t = concrete.clone(); t.needsUpdate = true; t.repeat.set(112, 112); return t; })() }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
@@ -856,21 +886,24 @@ const KIND = { Personnel: 'Manual workstation', Vendor: 'Subcontractor', Machine
 let cursorX = -siteW / 2 + PAD + 2;
 for (const unit of SITE.units) {
   const ux = cursorX + unit.w / 2; cursorX += unit.w + AISLE;
-  const us = slab(unit.w, unit.d, 0.06, 0.3, 0xa9b4c0); us.position.x = ux; us.position.z = OZ; world.add(us);
-  const ut = paintedText(`${unit.id}  ${unit.name}`, 1.25, '#e9eef3', 0.55); ut.position.set(ux - unit.w / 2 + 0.7, 0.31, OZ - unit.d / 2 + 1.35); world.add(ut);
+  const unitNode = layoutNode('units', unit.id, world); world.add(unitNode);
+  const us = slab(unit.w, unit.d, 0.06, 0.3, 0xa9b4c0); us.position.x = ux; us.position.z = OZ; unitNode.add(us);
+  const ut = paintedText(`${unit.id}  ${unit.name}`, 1.25, '#e9eef3', 0.55); ut.position.set(ux - unit.w / 2 + 0.7, 0.31, OZ - unit.d / 2 + 1.35); unitNode.add(ut);
+  unitNode.userData.footprint = [ux, OZ, unit.w, unit.d];
   let shelfZ = OZ - unit.d / 2 + 2.6;
   for (const shelf of unit.shelves) {
     for (const group of shelf.groups) {
       const gx = ux - unit.w / 2 + 1.5 + group.offset + group.w / 2, gz = shelfZ + group.d / 2;
+      const groupNode = layoutNode('groups', group.id, world); unitNode.add(groupNode); groupNode.userData.footprint = [gx, gz, group.w, group.d];
       const gs = slab(group.w, group.d, 0.06, LEVEL, group.resources.length ? 0x6f7f90 : 0x47525f, 4); gs.position.set(gx, gs.position.y, gz);
-      gs.material.emissive = new THREE.Color(0x3dd6c6); gs.material.emissiveIntensity = 0; world.add(gs);
-      border(world, group.w, group.d, gx, LEVEL + 0.005, gz);
-      const gt = paintedText(`${group.id}  ${group.name}`, 0.8, '#7ff0e3', 0.8); gt.position.set(gx - group.w / 2 + 0.6, LEVEL + 0.01, gz + group.d / 2 - 0.75); world.add(gt);
-      groupsById[group.id] = { group, unit, mat: gs.material, x: gx, z: gz };
+      gs.material.emissive = new THREE.Color(0x3dd6c6); gs.material.emissiveIntensity = 0; groupNode.add(gs);
+      border(groupNode, group.w, group.d, gx, LEVEL + 0.005, gz);
+      const gt = paintedText(`${group.id}  ${group.name}`, 0.8, '#7ff0e3', 0.8); gt.position.set(gx - group.w / 2 + 0.6, LEVEL + 0.01, gz + group.d / 2 - 0.75); groupNode.add(gt);
+      groupsById[group.id] = { group, unit, node: groupNode, mat: gs.material, x: gx, z: gz, anchors: {} };
       [['IN', group.input, gx - group.w / 2 + 2.0], ['OUT', group.output, gx + group.w / 2 - (group.resources.length ? 3.4 : 2.0)]].forEach(([kind, place, x]) => {
         if (!place) return;
-        const bay = floorBay(kind, place); bay.position.set(x, LEVEL + 0.012, gz - group.d / 2 + 1.25); world.add(bay);
-        (groupsById[group.id].bays ??= {})[kind] = new THREE.Vector3(x, LEVEL, gz - group.d / 2 + 1.25);
+        const bay = floorBay(kind, place); bay.position.set(x, LEVEL + 0.012, gz - group.d / 2 + 1.25); groupNode.add(bay);
+        groupsById[group.id].anchors[kind] = bay; (groupsById[group.id].bays ??= {})[kind] = new THREE.Vector3();
         bay.userData.info = { kind: kind === 'IN' ? 'Input location' : 'Output location', small: true, title: `${place.warehouseId ?? '—'} / ${place.locationId ?? '—'}`, rows: [
           ['Resource group', `${group.id} ${group.name}`], ['Warehouse', place.warehouseId ?? '—'], ['Location', place.locationId ?? '—'],
           ['Role', kind === 'IN' ? 'Components are delivered here' : 'Output leaves from here'], ['Source', 'Resource group setup in the ERP'] ] };
@@ -880,7 +913,7 @@ for (const unit of SITE.units) {
         const x = gx - group.w / 2 + 0.8 + CELL / 2 + (i % PER_ROW) * CELL, z = gz - group.d / 2 + 0.2 + group.bay + CELL / 2 + Math.floor(i / PER_ROW) * ROW;
         const statusMat = glow(0x5b7a99, 1.2);
         const built = (ARCHETYPES[res.model] ?? ARCHETYPES.press)(statusMat, res);
-        const holder = new THREE.Group(); holder.position.set(x, LEVEL, z); holder.add(built.group); world.add(holder);
+        const holder = layoutNode('resources', res.id, new THREE.Group(), new THREE.Vector3(x, LEVEL, z)); holder.add(built.group); groupNode.add(holder); holder.userData.footprint = [0, 0, 6.4, built.depth + 2.2];
         const bar = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.07, 0.09), statusMat); bar.position.set(0, 0.2, built.depth / 2 + 0.06); holder.add(bar);
         const rl = label(res.id, 'res'); rl.position.set(0, built.height + 0.9, 0); holder.add(rl);
         const onRoutes = ROUTES.filter((r) => r.ops.some((o) => o.alternatives.includes(res.id) || o.assistants.some((s) => s.includes(res.id))));
@@ -893,19 +926,26 @@ for (const unit of SITE.units) {
         pickables.push(holder);
         machines[res.id] = { ...built, res, statusMat, under, holder, bar, tag: rl, glow: 0, active: 0, pos: new THREE.Vector3(x, LEVEL, z) };
         if (res.worker) {
-          const w = makeWorker(true); w.position.set(x + 2.9, LEVEL, z + 3.2); w.rotation.y = -2.2; world.add(w);
+          const w = makeWorker(true); w.position.set(2.9, 0, 3.2); w.rotation.y = -2.2; holder.add(w);
           w.userData.info = { kind: 'Secondary resource', title: `${res.worker.id} · ${res.worker.name}`, rows: [
             ['Resource type', res.worker.type], ['Works with', `${res.id} ${res.name}`], ['Role', 'Secondary on the operation'], ['Calendar', res.worker.calendarId ?? '—'] ] };
           pickables.push(w); machines[res.id].worker = w;
         }
       });
       if (!group.resources.length) continue;
-      const cab = box(1.0, 2.0, 0.7, M.graphite, gx + group.w / 2 - 0.9, LEVEL + 1.0, gz - group.d / 2 + 0.6, 0.05); world.add(cab);
-      for (let k = 0; k < 3; k++) { const led = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), glow([0x3ddc84, 0xffa23d, 0x3dd6c6][k], 3)); led.position.set(cab.position.x - 0.25 + k * 0.25, LEVEL + 1.7, cab.position.z + 0.36); world.add(led); }
+      const cab = box(1.0, 2.0, 0.7, M.graphite, gx + group.w / 2 - 0.9, LEVEL + 1.0, gz - group.d / 2 + 0.6, 0.05); groupNode.add(cab);
+      for (let k = 0; k < 3; k++) { const led = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), glow([0x3ddc84, 0xffa23d, 0x3dd6c6][k], 3)); led.position.set(cab.position.x - 0.25 + k * 0.25, LEVEL + 1.7, cab.position.z + 0.36); groupNode.add(led); }
     }
     shelfZ += shelf.d + AISLE;
   }
 }
+// Positions used by routes, material and orders come from the nodes, so they follow any hand-made move.
+function syncPositions() {
+  world.updateMatrixWorld(true);
+  for (const id in machines) machines[id].holder.getWorldPosition(machines[id].pos).setY(LEVEL);
+  for (const g of Object.values(groupsById)) for (const kind in g.anchors) g.anchors[kind].getWorldPosition(g.bays[kind]).setY(LEVEL);
+}
+syncPositions();
 // Fit camera, fog and shadows to the generated floor.
 const reach = Math.max(siteW * 1.15, siteD * 1.9);
 camera.position.copy(new THREE.Vector3(0.52, 0.5, 0.72).normalize().multiplyScalar(reach));
@@ -1249,9 +1289,7 @@ ORDERS.forEach((o, n) => {
   o.mesh.userData.info = { kind: 'Production order', title: `${o.id} · ${o.product ?? ''}`, small: true, rows: o.rows };
   pickables.push(o.mesh); ordersLayer.add(o.mesh);
   if (!o.jobs.length) return;
-  const slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
-  const stops = [RAW.clone().add(slot), ...o.jobs.map((j) => front(j[0])), FIN.clone().add(new THREE.Vector3(-slot.x, 0, slot.z))];
-  o.curves = stops.slice(0, -1).map((s, i) => curve(s, stops[i + 1]));
+  o.slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
   // Material for each job: a crate leaves the consumption location and reaches the resource as the job starts.
   o.supplies = [];
   o.jobs.forEach((job, k) => {
@@ -1262,10 +1300,20 @@ ORDERS.forEach((o, n) => {
       mesh.userData.info = { kind: 'Material', small: true, title: `${items.length} component${items.length === 1 ? '' : 's'} for ${o.id}`, rows: [['From', src.text], ['To', `${job[0]} ${machines[job[0]].res.name}`],
         ...items.slice(0, 6).map((m) => [m.item, m.qty == null ? '—' : String(m.qty)]), ['Source', o.materialsFrom]] };
       pickables.push(mesh);
-      o.supplies.push({ mesh, at: job[1], curve: curve(src.pos, front(job[0]).add(new THREE.Vector3(-1.4 + i * 0.9, 0, 0.9))) });
+      o.supplies.push({ mesh, at: job[1], src, to: job[0], i });
     });
   });
 });
+// Paths between stations; rebuilt when the layout changes.
+function orderPaths() {
+  for (const o of ORDERS) {
+    if (!o.jobs.length) continue;
+    const stops = [RAW.clone().add(o.slot), ...o.jobs.map((j) => front(j[0])), FIN.clone().add(new THREE.Vector3(-o.slot.x, 0, o.slot.z))];
+    o.curves = stops.slice(0, -1).map((s, i) => curve(s, stops[i + 1]));
+    for (const s of o.supplies) s.curve = curve(s.src.pos, front(s.to).add(new THREE.Vector3(-1.4 + s.i * 0.9, 0, 0.9)));
+  }
+}
+orderPaths();
 function placeOrders(t) {
   for (const id in machines) machines[id].active = 0;
   const waiting = {};
@@ -1403,8 +1451,122 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   document.getElementById('d-title').textContent = info.title;
   const body = document.getElementById('d-body'); body.replaceChildren();
   for (const [k, v] of info.rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
-  ring.position.set(o.position.x, LEVEL + 0.03, o.position.z); ring.scale.setScalar(info.small || info.kind === 'Secondary resource' ? 0.22 : 1); ring.visible = true;
+  const at = o.getWorldPosition(new THREE.Vector3()); ring.position.set(at.x, LEVEL + 0.03, at.z); ring.scale.setScalar(info.small || info.kind === 'Secondary resource' ? 0.22 : 1); ring.visible = true;
 });
+
+// ---------------------------------------------------------------- manual layout (local layer)
+// Moving something changes only where it is drawn. Positions are saved per data set in layout.json, as offsets
+// from the automatic layout, so a new extract with new resources still places them automatically.
+const layoutPanel = document.getElementById('layoutPanel'), layoutBtn = document.getElementById('layoutBtn'), layoutState = document.getElementById('layoutState');
+const undoBtn = document.getElementById('layoutUndo'), resetSelBtn = document.getElementById('layoutResetSel');
+let editing = false, level = 'resources', drag = null, picked = null, layoutTimer = null;
+const moves = [];
+const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -LEVEL);
+const pickBox = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(0xffa23d).multiplyScalar(2.2)); pickBox.visible = false; world.add(pickBox);
+const movedCount = () => Object.values(OFF).reduce((n, t) => n + Object.keys(t).length, 0);
+const kindName = { units: 'production unit', groups: 'resource group', resources: 'resource' };
+function layoutNote(text) {
+  const n = movedCount();
+  const where = canSave ? `saved in data/${dataset}/layout.json` : 'sample data: changes last until the page is reloaded';
+  const clash = overlaps();
+  layoutState.textContent = text ?? `${n ? n + ' moved' : 'Nothing moved yet'} · ${where}${clash.length ? ` · overlapping: ${clash.slice(0, 3).join(', ')}${clash.length > 3 ? '…' : ''}` : ''}`;
+  layoutState.style.color = !text && clash.length ? 'var(--warm)' : '';
+}
+// Footprints of sibling groups (within the site) and of resources that sit on the same floor; reported, never blocked.
+function overlaps() {
+  const rect = (node) => { const [x, z, w, d] = node.userData.footprint; const p = node.getWorldPosition(new THREE.Vector3()), b = node.userData.layout.base;
+    const cx = node.userData.layout.kind === 'resources' ? p.x : x + p.x - b.x, cz = node.userData.layout.kind === 'resources' ? p.z : z + p.z - b.z;
+    return [cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2]; };
+  const hit = (a, b) => a[0] < b[2] - 0.2 && b[0] < a[2] - 0.2 && a[1] < b[3] - 0.2 && b[1] < a[3] - 0.2;
+  const out = [];
+  for (const kind of ['units', 'groups', 'resources']) {
+    const nodes = Object.values(layoutNodes[kind]).filter((n) => n.userData.footprint), rects = nodes.map(rect);
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) if (hit(rects[i], rects[j])) out.push(`${nodes[i].userData.layout.id} / ${nodes[j].userData.layout.id}`);
+  }
+  return out;
+}
+function frame(node) {
+  if (!node) { pickBox.visible = false; return; }
+  pickBox.box.setFromObject(node); pickBox.box.min.y = LEVEL; pickBox.box.max.y = Math.max(pickBox.box.max.y, LEVEL + 0.5); pickBox.visible = true;
+}
+function place(node, dx, dz) {
+  const { kind, id, base } = node.userData.layout;
+  node.position.set(base.x + dx, base.y, base.z + dz);
+  if (dx || dz) OFF[kind][id] = [dx, dz]; else delete OFF[kind][id];
+}
+function layoutChanged() {
+  syncPositions(); orderPaths(); setMode(mode); frame(picked);
+  undoBtn.disabled = !moves.length; resetSelBtn.disabled = !picked || !OFF[picked.userData.layout.kind][picked.userData.layout.id];
+  if (!canSave) { layoutNote(); return; }
+  layoutNote('Saving…'); clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`/api/layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(OFF) });
+      if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+      layoutNote();
+    } catch (error) { layoutNote(`Not saved: ${error.message}`); }
+  }, 400);
+}
+const offsetOf = (node) => [...(OFF[node.userData.layout.kind][node.userData.layout.id] ?? [0, 0])];
+function nodeAt(e) {
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(pointer, camera);
+  for (const hit of ray.intersectObjects(Object.values(layoutNodes.units), true)) {
+    let o = hit.object; while (o && o.userData.layout?.kind !== level) o = o.parent;
+    if (o) return o;
+  }
+  return null;
+}
+function floorPoint(e) {
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(pointer, camera);
+  return ray.ray.intersectPlane(floorPlane, new THREE.Vector3());
+}
+// Capture phase on window: runs before the orbit controls, so a drag on an item moves it instead of the camera.
+addEventListener('pointerdown', (e) => {
+  if (!editing || e.button !== 0 || e.target !== renderer.domElement) return;
+  const node = nodeAt(e), p = node && floorPoint(e); if (!node || !p) return;
+  picked = node; frame(node); resetSelBtn.disabled = !OFF[node.userData.layout.kind][node.userData.layout.id];
+  const { kind, id } = node.userData.layout;
+  layoutNote(`${kindName[kind]} ${id} · drag to move`);
+  drag = { node, start: p, from: offsetOf(node), moved: false }; down = [e.clientX, e.clientY];
+  controls.enabled = false; document.body.classList.add('dragging'); e.stopPropagation();
+}, { capture: true });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const p = floorPoint(e); if (!p) return;
+  const snap = (v) => Math.round(v * 2) / 2, half = [siteW / 2, siteD / 2];
+  let dx = snap(drag.from[0] + p.x - drag.start.x), dz = snap(drag.from[1] + p.z - drag.start.z);
+  // Keep the item's centre on the site floor.
+  const c = new THREE.Vector3(); new THREE.Box3().setFromObject(drag.node).getCenter(c);
+  const cur = offsetOf(drag.node), cx = c.x + dx - cur[0], cz = c.z + dz - cur[1];
+  dx -= Math.max(0, cx - half[0] + 2) + Math.min(0, cx + half[0] - 2); dz -= Math.max(0, cz - half[1] + 2) + Math.min(0, cz + half[1] - 2);
+  if (!drag.moved && Math.hypot(dx - drag.from[0], dz - drag.from[1]) < 0.5) return;
+  drag.moved = true; place(drag.node, dx, dz); frame(drag.node);
+  layoutNote(`${kindName[drag.node.userData.layout.kind]} ${drag.node.userData.layout.id} · ${dx >= 0 ? '+' : ''}${dx} m, ${dz >= 0 ? '+' : ''}${dz} m`);
+}, { capture: true });
+addEventListener('pointerup', () => {
+  if (!drag) return;
+  const { node, from, moved } = drag; drag = null; controls.enabled = true; document.body.classList.remove('dragging');
+  if (moved) { moves.push({ node, from }); if (moves.length > 50) moves.shift(); layoutChanged(); }
+}, { capture: true });
+undoBtn.addEventListener('click', () => { const h = moves.pop(); if (!h) return; place(h.node, ...h.from); picked = h.node; layoutChanged(); });
+resetSelBtn.addEventListener('click', () => { if (!picked) return; moves.push({ node: picked, from: offsetOf(picked) }); place(picked, 0, 0); layoutChanged(); });
+document.getElementById('layoutResetAll').addEventListener('click', () => {
+  if (!movedCount() || !confirm('Return everything to the automatic layout?')) return;
+  moves.length = 0;
+  for (const kind in layoutNodes) for (const node of Object.values(layoutNodes[kind])) place(node, 0, 0);
+  layoutChanged();
+});
+document.querySelectorAll('#layoutLevel button').forEach((b) => b.addEventListener('click', () => {
+  level = b.dataset.level; document.querySelectorAll('#layoutLevel button').forEach((x) => x.classList.toggle('on', x === b));
+  picked = null; frame(null); resetSelBtn.disabled = true; layoutNote();
+}));
+layoutBtn.addEventListener('click', () => {
+  editing = !editing; layoutPanel.hidden = !editing; layoutBtn.classList.toggle('on', editing); document.body.classList.toggle('editing', editing);
+  if (editing && !mapPanel.hidden) mapBtn.click();
+  if (!editing) { picked = null; frame(null); }
+  layoutNote();
+});
+mapBtn.addEventListener('click', () => { if (!mapPanel.hidden && editing) layoutBtn.click(); });
 
 function resize() {
   const w = innerWidth, h = innerHeight;

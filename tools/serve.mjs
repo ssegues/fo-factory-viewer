@@ -1,6 +1,7 @@
 // Local server for the viewer. No dependencies.
 // Besides static files it offers three actions: re-reading production orders and jobs from the ERP
-// into a local snapshot, re-reading warehouse work into warehouses.json, and saving the local model mapping (visuals.json). The browser never sees credentials; the read runs here and is GET-only.
+// into a local snapshot, re-reading warehouse work into warehouses.json, and saving the local model mapping (visuals.json)
+// and the hand-made floor layout (layout.json). The browser never sees credentials; the read runs here and is GET-only.
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { access, readFile, writeFile } from 'node:fs/promises';
@@ -50,6 +51,23 @@ function cleanVisuals(input) {
   };
   if (!MODELS.has(input.fallback)) throw new Error('Unknown default model.');
   return { note: 'Local presentation layer. Never written back to the ERP.', byResource: map(input.byResource), byGroup: map(input.byGroup), byType: map(input.byType), byCapability: map(input.byCapability), fallback: input.fallback };
+}
+/** The layout file is a local presentation layer too: where units, groups and resources were moved by hand.
+ *  Values are offsets in metres from the automatic layout; anything not listed keeps its automatic place. */
+function cleanLayout(input) {
+  if (!input || typeof input !== 'object') throw new Error('Expected an object.');
+  const map = (value) => {
+    const out = {}, entries = Object.entries(value && typeof value === 'object' ? value : {});
+    if (entries.length > 5000) throw new Error('Too many entries.');
+    for (const [key, offset] of entries) {
+      if (key.length > 80) throw new Error('Identifier too long.');
+      if (!Array.isArray(offset) || offset.length !== 2 || !offset.every((v) => Number.isFinite(v) && Math.abs(v) <= 2000)) throw new Error(`Invalid offset for "${key}".`);
+      const [dx, dz] = offset.map((v) => Math.round(v * 10) / 10);
+      if (dx || dz) out[key] = [dx, dz];
+    }
+    return out;
+  };
+  return { note: 'Local presentation layer: offsets in metres from the automatic layout. Never written back to the ERP.', version: 1, units: map(input.units), groups: map(input.groups), resources: map(input.resources) };
 }
 async function readBody(request, limit = 200_000) {
   const chunks = []; let size = 0;
@@ -124,13 +142,14 @@ createServer(async (request, response) => {
       return json(response, result.code, result.body);
     } catch (error) { return json(response, 500, { error: error.message }); }
   }
-  if (path === '/api/visuals') {
-    const folder = snapshotFolder(url.searchParams.get('data'));
+  if (path === '/api/visuals' || path === '/api/layout') {
+    const folder = snapshotFolder(url.searchParams.get('data')), layout = path === '/api/layout';
     try {
       if (request.method !== 'PUT') return json(response, 405, { error: 'Method not allowed' });
       if (!fromViewer(request)) return json(response, 403, { error: 'Forbidden' });
       if (!folder || !(await exists(join(folder, 'snapshot.json')))) return json(response, 409, { error: 'Only local extracts can be saved.' });
-      await writeFile(join(folder, 'visuals.json'), JSON.stringify(cleanVisuals(await readBody(request)), null, 2) + '\n');
+      const body = await readBody(request);
+      await writeFile(join(folder, layout ? 'layout.json' : 'visuals.json'), JSON.stringify(layout ? cleanLayout(body) : cleanVisuals(body), null, 2) + '\n');
       return json(response, 200, { saved: true });
     } catch (error) { return json(response, 400, { error: error.message }); }
   }

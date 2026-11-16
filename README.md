@@ -18,6 +18,7 @@ FO Factory Viewer is a community project that reads the production setup of Dyna
 - **Material** — violet lanes and crates carry components from the location the BOM line consumes from to the resource that uses them.
 - **Warehouse** — any warehouse laid out from its locations (aisle, rack, shelf, bin, zone), with its real warehouse work replayed by a forklift, line by line.
 - **Models** — the ERP does not say whether a resource is a press or a robot. A panel maps resources to 3D models with rules by resource, group, type or capability; the mapping stays local.
+- **Layout** — the automatic floor is a starting point. Drag resources, groups or whole production units to match your real plant; the positions are saved locally in `layout.json` and routes and orders follow them.
 
 ## Try it in one minute
 
@@ -56,7 +57,7 @@ An access error (HTTP 403) on a data entity usually means the user's roles grant
 ## What is real and what is not
 
 - **From the ERP:** the hierarchy, resources and capabilities, which resources can perform each operation, routes, BOMs, production orders and their scheduled jobs, BOM line consumption locations, warehouse locations and zones, and warehouse work with its lines.
-- **Derived:** the floor layout, the position inside a rack (read from the location ID), and which 3D model stands for each resource.
+- **Derived:** the floor layout (unless you move things by hand), the position inside a rack (read from the location ID), and which 3D model stands for each resource.
 - **Viewer conventions:** speeds, how long a zero-length job is shown as busy, and the moment a material crate arrives (when the job starts).
 - **Decoration:** lamps, dust, the logistics lane with its trains and pedestrians, the boxes on warehouse shelves, and the flows marked *illustrative* on the warehouse page.
 
@@ -69,7 +70,7 @@ An access error (HTTP 403) on a data entity usually means the user's roles grant
 | `viewer/models/` | glTF models of the CNC, robot and packaging cells |
 | `data/sample/` | Invented sample data in the snapshot format |
 | `data/local/` | Your real extracts and connection file; ignored by git |
-| `tools/serve.mjs` | Local server: static files, the refresh buttons, saving the model mapping |
+| `tools/serve.mjs` | Local server: static files, the refresh buttons, saving the model mapping and the layout |
 | `tools/import-dmf.mjs` | Snapshot from a Data management package |
 | `tools/extract-orders.mjs` | Orders, jobs and BOM lines over OData (GET only) |
 | `tools/import-warehouse.mjs` | `warehouses.json` from a warehouse Data management package |
