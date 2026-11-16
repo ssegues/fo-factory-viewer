@@ -69,6 +69,18 @@ function cleanLayout(input) {
   };
   return { note: 'Local presentation layer: offsets in metres from the automatic layout. Never written back to the ERP.', version: 1, units: map(input.units), groups: map(input.groups), resources: map(input.resources) };
 }
+/** Hand-made warehouse layout: per warehouse, offsets in metres of rack aisles and floor areas. */
+function cleanWarehouseLayout(input) {
+  if (!input || typeof input !== 'object') throw new Error('Expected an object.');
+  const warehouses = {}, entries = Object.entries(input.warehouses && typeof input.warehouses === 'object' ? input.warehouses : {});
+  if (entries.length > 500) throw new Error('Too many warehouses.');
+  for (const [id, blocks] of entries) {
+    if (id.length > 40) throw new Error('Warehouse identifier too long.');
+    const cleaned = cleanLayout({ resources: blocks }).resources;
+    if (Object.keys(cleaned).length) warehouses[id] = cleaned;
+  }
+  return { note: 'Local presentation layer: offsets in metres of rack aisles and floor areas from the automatic warehouse layout. Never written back to the ERP.', version: 1, warehouses };
+}
 async function readBody(request, limit = 200_000) {
   const chunks = []; let size = 0;
   for await (const chunk of request) { size += chunk.length; if (size > limit) throw new Error('Request too large.'); chunks.push(chunk); }
@@ -142,14 +154,15 @@ createServer(async (request, response) => {
       return json(response, result.code, result.body);
     } catch (error) { return json(response, 500, { error: error.message }); }
   }
-  if (path === '/api/visuals' || path === '/api/layout') {
-    const folder = snapshotFolder(url.searchParams.get('data')), layout = path === '/api/layout';
+  if (path === '/api/visuals' || path === '/api/layout' || path === '/api/warehouse-layout') {
+    const folder = snapshotFolder(url.searchParams.get('data')), layout = path === '/api/layout', whLayout = path === '/api/warehouse-layout';
     try {
       if (request.method !== 'PUT') return json(response, 405, { error: 'Method not allowed' });
       if (!fromViewer(request)) return json(response, 403, { error: 'Forbidden' });
       if (!folder || !(await exists(join(folder, 'snapshot.json')))) return json(response, 409, { error: 'Only local extracts can be saved.' });
       const body = await readBody(request);
-      await writeFile(join(folder, layout ? 'layout.json' : 'visuals.json'), JSON.stringify(layout ? cleanLayout(body) : cleanVisuals(body), null, 2) + '\n');
+      const [file, clean] = whLayout ? ['warehouse-layout.json', cleanWarehouseLayout] : layout ? ['layout.json', cleanLayout] : ['visuals.json', cleanVisuals];
+      await writeFile(join(folder, file), JSON.stringify(clean(body), null, 2) + '\n');
       return json(response, 200, { saved: true });
     } catch (error) { return json(response, 400, { error: error.message }); }
   }

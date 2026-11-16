@@ -24,6 +24,17 @@
   #refreshWork { background:rgba(61,214,198,.12); color:var(--accent); border:1px solid var(--line); padding:6px 10px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; text-align:left; line-height:1.35; }
   #refreshWork small { display:block; color:var(--dim); font-size:10px; letter-spacing:.6px; text-transform:none; }
   #refreshWork:disabled { cursor:progress; opacity:.7; } #refreshWork.failed { color:var(--warm); border-color:rgba(255,162,61,.6); }
+  #layoutBtn { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:7px 12px; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; cursor:pointer; }
+  #layoutBtn.on { color:var(--warm); border-color:var(--warm); }
+  #layoutPanel { left:16px; width:330px; padding:12px 14px; display:flex; flex-direction:column; gap:8px; font-size:12px; }
+  #layoutPanel[hidden] { display:none; }
+  #layoutPanel .k { color:var(--warm); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; }
+  #layoutPanel h2 { margin:0; font-size:16px; font-weight:600; } #layoutPanel p { margin:0; color:var(--dim); line-height:1.45; }
+  #layoutPanel .acts { display:flex; gap:6px; flex-wrap:wrap; }
+  #layoutPanel .acts button { background:transparent; color:var(--dim); border:1px solid rgba(140,170,190,.35); padding:5px 9px; font-size:11px; cursor:pointer; }
+  #layoutPanel .acts button:disabled { opacity:.4; cursor:default; }
+  #layoutState { color:var(--dim); font-size:11px; }
+  body.editing #stage canvas { cursor:grab; } body.editing.dragging #stage canvas { cursor:grabbing; }
   #whSel { background:#0b1118; color:var(--accent); border:1px solid var(--line); padding:7px 8px; font-size:12px; }
   #hint { bottom:62px; left:16px; padding:9px 14px; color:var(--dim); font-size:13px; max-width:560px; }
   #detail { top:16px; right:16px; width:290px; padding:14px 16px 16px; }
@@ -64,6 +75,14 @@
   <select id="whSel" class="mono" aria-label="Warehouse"></select>
   <div class="seg" id="flows"></div>
   <button id="refreshWork" class="mono" hidden></button>
+  <button id="layoutBtn" class="mono">Layout</button>
+</div>
+<div id="layoutPanel" class="hud" hidden>
+  <div class="k mono">Local layer · never written to the ERP</div>
+  <h2>Warehouse layout</h2>
+  <p>Drag a rack aisle or a floor area to move it with all its locations. Dock locations stay along the dock wall. Anything you have not moved keeps its automatic place.</p>
+  <div class="acts mono"><button id="layoutUndo" disabled>Undo</button><button id="layoutResetSel" disabled>Reset selected</button><button id="layoutResetAll">Reset this warehouse</button></div>
+  <div id="layoutState" class="mono"></div>
 </div>
 <div id="hint" class="hud"></div>
 <div id="demo" class="mono">Proof of concept · structure and warehouse work from the ERP</div>
@@ -99,6 +118,7 @@ const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? reque
 document.getElementById('navFactory').href = `./?data=${dataset}`;
 fetch('../package.json').then((r) => r.ok ? r.json() : null).catch(() => null).then((pkg) => { if (pkg?.version) document.getElementById('version').textContent = 'v' + pkg.version; });
 const DATA = await fetch(`../data/${dataset}/warehouses.json`).then((r) => r.ok ? r.json() : null).catch(() => null);
+const WLAYOUT = await fetch(`../data/${dataset}/warehouse-layout.json`).then((r) => r.ok ? r.json() : null).catch(() => null);
 if (!DATA) { document.getElementById('loading').textContent = `No warehouses.json in data/${dataset}`; throw new Error('Warehouse data missing'); }
 const whSel = document.getElementById('whSel');
 for (const w of [...DATA.warehouses].sort((a, b) => b.locations.length - a.locations.length)) whSel.add(new Option(`${w.id} · ${w.locations.length} location${w.locations.length === 1 ? '' : 's'}${w.work?.length ? ` · ${w.work.length} work` : ''}`, w.id));
@@ -182,33 +202,46 @@ const place = {};                               // location id -> { pos, access,
 const pickables = [], slots = [];
 let cursor = 13, minZ = -8;
 const blockInfo = [];
+// Hand-made layout (warehouse-layout.json): offsets per rack aisle and floor area of this warehouse.
+// Each aisle and floor area is built in its own node; its locations move with it. Dock locations stay put.
+const ALL_OFF = { ...WLAYOUT?.warehouses }, OFF = { ...ALL_OFF[WH.id] };
+const blockNodes = {}, hitMat = new THREE.MeshBasicMaterial({ visible: false });
+// An invisible box over the block's footprint, so it can be grabbed anywhere (between slots, on top of boxes).
+function addHit(node, padX = 0.3) { const [x0, z0, x1, z1] = node.userData.footprint; const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + padX * 2, 3, z1 - z0 + 0.6), hitMat); m.position.set((x0 + x1) / 2, 1.5, (z0 + z1) / 2); node.add(m); }
+function blockNode(key, text) {
+  const node = new THREE.Group(); node.userData.block = { key, text };
+  const [dx, dz] = OFF[key] ?? [0, 0]; node.position.set(dx, 0, dz); hall.add(node); blockNodes[key] = node; return node;
+}
 for (const block of blocks) {
   const x0 = cursor;
   if (block.racked) {
     const aisles = [...new Set(block.locations.map((l) => l.aisle))].sort();
     const racks = Math.max(...block.locations.map((l) => l.rack)), levels = Math.max(...block.locations.map((l) => l.shelf)), bins = Math.max(...block.locations.map((l) => l.bin));
+    let first = null;
     aisles.forEach((aisle, i) => {
-      const x = x0 + i * ROW + DEPTH / 2;
+      const x = x0 + i * ROW + DEPTH / 2, node = blockNode(`${block.type}/aisle ${aisle}`, `aisle ${aisle} (${block.type})`); first ??= node;
       for (const l of block.locations.filter((q) => q.aisle === aisle)) {
         const z = -(l.rack - 0.5) * BAY + (l.bin - (bins + 1) / 2) * (BAY / bins);
-        place[l.id] = { location: l, pos: new THREE.Vector3(x, 0.22 + (l.shelf - 1) * LEVEL_H, z), access: new THREE.Vector3(x + DEPTH / 2 + 1.55, 0, -(l.rack - 0.5) * BAY), size: [DEPTH * 0.82, (BAY / bins) * 0.84] };
+        place[l.id] = { location: l, pos: new THREE.Vector3(x, 0.22 + (l.shelf - 1) * LEVEL_H, z), access: new THREE.Vector3(x + DEPTH / 2 + 1.55, 0, -(l.rack - 0.5) * BAY), size: [DEPTH * 0.82, (BAY / bins) * 0.84], node };
       }
       const len = racks * BAY;
-      for (let r = 0; r <= racks; r++) for (const dx of [-DEPTH / 2, DEPTH / 2]) hall.add(box(0.08, levels * LEVEL_H + 0.3, 0.08, M.orange, x + dx, (levels * LEVEL_H + 0.3) / 2, -r * BAY, 0.01));
-      for (let s = 0; s < levels; s++) for (const dx of [-DEPTH / 2, DEPTH / 2]) hall.add(box(0.07, 0.1, len, M.blue, x + dx, 0.14 + s * LEVEL_H, -len / 2, 0.01));
-      const tag = label(`AISLE ${aisle}`); tag.position.set(x, levels * LEVEL_H + 1.0, 0.4); hall.add(tag);
+      for (let r = 0; r <= racks; r++) for (const dx of [-DEPTH / 2, DEPTH / 2]) node.add(box(0.08, levels * LEVEL_H + 0.3, 0.08, M.orange, x + dx, (levels * LEVEL_H + 0.3) / 2, -r * BAY, 0.01));
+      for (let s = 0; s < levels; s++) for (const dx of [-DEPTH / 2, DEPTH / 2]) node.add(box(0.07, 0.1, len, M.blue, x + dx, 0.14 + s * LEVEL_H, -len / 2, 0.01));
+      const tag = label(`AISLE ${aisle}`); tag.position.set(x, levels * LEVEL_H + 1.0, 0.4); node.add(tag);
+      node.userData.footprint = [x - DEPTH / 2, -len, x + DEPTH / 2, 0]; addHit(node, 1.4);
     });
     cursor = x0 + aisles.length * ROW; minZ = Math.min(minZ, -racks * BAY - 3);
-    blockInfo.push({ block, x0, x1: cursor - (ROW - DEPTH - 0.4), text: `${block.type} · ${aisles.length} aisles × ${racks} racks × ${levels} shelves` });
+    blockInfo.push({ block, x0, x1: cursor - (ROW - DEPTH - 0.4), node: first, text: `${block.type} · ${aisles.length} aisles × ${racks} racks × ${levels} shelves` });
   } else {
-    const n = block.locations.length, cols = Math.min(8, Math.ceil(Math.sqrt(n * 1.4)));
+    const n = block.locations.length, cols = Math.min(8, Math.ceil(Math.sqrt(n * 1.4))), node = blockNode(`${block.type}/area`, `${block.type} area`);
     block.locations.sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })).forEach((l, i) => {
       const x = x0 + (i % cols) * CELL_X + CELL_X / 2, z = -Math.floor(i / cols) * (CELL_Z + 1.4) - CELL_Z / 2 - 0.6;
-      place[l.id] = { location: l, pos: new THREE.Vector3(x, 0.03, z), access: new THREE.Vector3(x, 0, z + CELL_Z / 2 + 0.9), floor: true, size: [CELL_X - 0.5, CELL_Z - 0.4] };
-      hall.add(flat(CELL_X - 0.4, CELL_Z - 0.3, floorTag(l.id, '#' + colourOf(l).toString(16).padStart(6, '0')), x, z));
+      place[l.id] = { location: l, pos: new THREE.Vector3(x, 0.03, z), access: new THREE.Vector3(x, 0, z + CELL_Z / 2 + 0.9), floor: true, size: [CELL_X - 0.5, CELL_Z - 0.4], node };
+      node.add(flat(CELL_X - 0.4, CELL_Z - 0.3, floorTag(l.id, '#' + colourOf(l).toString(16).padStart(6, '0')), x, z));
     });
     cursor = x0 + cols * CELL_X; minZ = Math.min(minZ, -Math.ceil(n / cols) * (CELL_Z + 1.4) - 3);
-    blockInfo.push({ block, x0, x1: cursor, text: `${block.type} · ${n} floor location${n === 1 ? '' : 's'}` });
+    node.userData.footprint = [x0, -Math.ceil(n / cols) * (CELL_Z + 1.4) - 0.6, cursor, 0]; addHit(node);
+    blockInfo.push({ block, x0, x1: cursor, node, text: `${block.type} · ${n} floor location${n === 1 ? '' : 's'}` });
   }
   cursor += 4;
 }
@@ -228,7 +261,7 @@ hall.position.set(-W / 2, 0, -(minZ + maxZ) / 2);
   const stripe = (len, x, z, rot = 0) => { const m = hazard.clone(); m.needsUpdate = true; m.repeat.set(len / 0.64, 1); const s = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.3), std(0xffffff, 0.75, 0, { map: m })); s.rotation.x = -Math.PI / 2; s.rotation.z = rot; s.position.set(x, 0.012, z); hall.add(s); };
   stripe(W - 10, W / 2 + 4, zc - 2.3); stripe(W - 10, W / 2 + 4, zc + 2.3); stripe(D - 2, 10.2, (minZ + maxZ) / 2, Math.PI / 2);
   const title = paintedText(`Warehouse ${WH.id}`, 1.5, '#e9eef3', 0.5); title.position.set(12, 0.02, maxZ - 1.6); hall.add(title);
-  for (const b of blockInfo) { const t = paintedText(b.text, 0.75, '#7ff0e3', 0.8); t.position.set(b.x0, 0.02, 1.1); hall.add(t); }
+  for (const b of blockInfo) { const t = paintedText(b.text, 0.75, '#7ff0e3', 0.8); t.position.set(b.x0, 0.02, 1.1); (b.node ?? hall).add(t); }
   const wallMat = std(0x27303a, 0.8, 0.3);
   const back = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 9, 0.6), wallMat); back.position.set(W / 2, 4.5, minZ - 0.3); back.receiveShadow = true; hall.add(back);
   const side = new THREE.Mesh(new THREE.BoxGeometry(0.6, 9, D), wallMat); side.position.set(-2.3, 4.5, (minZ + maxZ) / 2); side.receiveShadow = true; hall.add(side);
@@ -242,22 +275,33 @@ hall.position.set(-W / 2, 0, -(minZ + maxZ) / 2);
   }
 }
 
-// Location slots (pickable plates) and decorative box fill, both instanced.
+// Location slots (pickable plates) and decorative box fill, both instanced. Positions follow the block offsets.
+for (const e of Object.values(place)) { e.base = e.pos.clone(); e.baseAccess = e.access.clone(); }
+function applyOffsets() {
+  for (const e of Object.values(place)) {
+    const o = e.node?.position ?? new THREE.Vector3();
+    e.pos.copy(e.base).add(new THREE.Vector3(o.x, 0, o.z)); e.access.copy(e.baseAccess).add(new THREE.Vector3(o.x, 0, o.z));
+  }
+}
+applyOffsets();
+let writeInstances;
 {
   const entries = Object.values(place);
   const plate = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.05, 1), new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.3 }), entries.length);
   const filled = entries.filter((e) => !e.dock && hash(e.location.id + WH.id) < 0.68);
   const boxes = new THREE.InstancedMesh(new RoundedBoxGeometry(1, 1, 1, 2, 0.04), new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 }), filled.length);
   const m4 = new THREE.Matrix4(), c = new THREE.Color();
-  entries.forEach((e, i) => {
-    m4.makeScale(e.size[0], 1, e.size[1]).setPosition(e.pos.x, e.pos.y, e.pos.z); plate.setMatrixAt(i, m4);
-    plate.setColorAt(i, c.setHex(colourOf(e.location)).multiplyScalar(e.floor ? 0.25 : 0.55)); slots.push(e);
-  });
-  filled.forEach((e, i) => {
-    const h = e.floor ? 0.9 + hash(e.location.id) * 1.3 : 0.55 + hash(e.location.id) * 0.4;
-    m4.makeScale(e.size[0] * (e.floor ? 0.55 : 0.92), h, e.size[1] * (e.floor ? 0.6 : 0.9)).setPosition(e.pos.x, e.pos.y + 0.03 + h / 2, e.pos.z); boxes.setMatrixAt(i, m4);
-    boxes.setColorAt(i, c.setHex(0xb98a56).lerp(new THREE.Color(colourOf(e.location)), 0.22).multiplyScalar(0.8 + hash(e.location.id + 'c') * 0.3));
-  });
+  entries.forEach((e, i) => { plate.setColorAt(i, c.setHex(colourOf(e.location)).multiplyScalar(e.floor ? 0.25 : 0.55)); slots.push(e); });
+  filled.forEach((e) => boxes.setColorAt(filled.indexOf(e), c.setHex(0xb98a56).lerp(new THREE.Color(colourOf(e.location)), 0.22).multiplyScalar(0.8 + hash(e.location.id + 'c') * 0.3)));
+  writeInstances = () => {
+    entries.forEach((e, i) => { m4.makeScale(e.size[0], 1, e.size[1]).setPosition(e.pos.x, e.pos.y, e.pos.z); plate.setMatrixAt(i, m4); });
+    filled.forEach((e, i) => {
+      const h = e.floor ? 0.9 + hash(e.location.id) * 1.3 : 0.55 + hash(e.location.id) * 0.4;
+      m4.makeScale(e.size[0] * (e.floor ? 0.55 : 0.92), h, e.size[1] * (e.floor ? 0.6 : 0.9)).setPosition(e.pos.x, e.pos.y + 0.03 + h / 2, e.pos.z); boxes.setMatrixAt(i, m4);
+    });
+    plate.instanceMatrix.needsUpdate = true; boxes.instanceMatrix.needsUpdate = true; plate.computeBoundingSphere(); plate.computeBoundingBox?.();
+  };
+  writeInstances();
   plate.receiveShadow = true; boxes.castShadow = true; boxes.receiveShadow = true; boxes.raycast = () => {};
   hall.add(plate, boxes); pickables.push(plate);
 }
@@ -331,8 +375,9 @@ function newTrip(t, first) {
   if (first) t.mesh.position.copy(from.access);
   t.src.position.copy(from.access).setY(0.05); t.dst.position.copy(to.access).setY(0.05);
 }
+let currentFlow = 'structure';
 function setFlow(id) {
-  flow = FLOWS.find((f) => f.id === id) ?? null;
+  currentFlow = id; flow = FLOWS.find((f) => f.id === id) ?? null;
   for (const t of trucks) { flowLayer.remove(t.mesh, t.src, t.dst); if (t.lane) flowLayer.remove(t.lane); } trucks.length = 0;
   stopWork(); const active = flow?.id ?? (id === 'work' && WORK.length ? 'work' : 'structure');
   document.querySelectorAll('#flows button').forEach((b) => b.classList.toggle('on', b.dataset.flow === active));
@@ -478,8 +523,93 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   for (const [k, v] of rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; body.append(dt, dd); }
   ring.position.set(e2.pos.x, e2.pos.y + 0.06, e2.pos.z); ring.visible = true;
 });
+// ---------------------------------------------------------------- manual layout (local layer)
+const layoutPanel = document.getElementById('layoutPanel'), layoutBtn = document.getElementById('layoutBtn'), layoutState = document.getElementById('layoutState');
+const undoBtn = document.getElementById('layoutUndo'), resetSelBtn = document.getElementById('layoutResetSel');
+const canSave = dataset.startsWith('local/');
+let editing = false, drag = null, picked = null, saveTimer = null;
+const moves = [], floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const pickBox = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(0xffa23d).multiplyScalar(2.2)); pickBox.visible = false; scene.add(pickBox);
+const offsetOf = (node) => [...(OFF[node.userData.block.key] ?? [0, 0])];
+function frame(node) { if (!node) { pickBox.visible = false; return; } pickBox.box.makeEmpty(); node.traverse((o) => { if (o.geometry && o.material !== hitMat) pickBox.box.expandByObject(o, false); }); pickBox.box.min.y = 0; pickBox.box.max.y = Math.max(pickBox.box.max.y, 0.6); pickBox.visible = true; }
+function rectOf(node) { const [x0, z0, x1, z1] = node.userData.footprint; const o = node.position; return [x0 + o.x, z0 + o.z, x1 + o.x, z1 + o.z]; }
+function overlaps() {
+  const nodes = Object.values(blockNodes), rects = nodes.map(rectOf), out = [];
+  const hit = (a, b) => a[0] < b[2] - 0.2 && b[0] < a[2] - 0.2 && a[1] < b[3] - 0.2 && b[1] < a[3] - 0.2;
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) if (hit(rects[i], rects[j])) out.push(`${nodes[i].userData.block.text} / ${nodes[j].userData.block.text}`);
+  return out;
+}
+function layoutNote(text) {
+  const n = Object.keys(OFF).length, clash = overlaps();
+  const where = canSave ? `saved in data/${dataset}/warehouse-layout.json` : 'sample data: changes last until the page is reloaded';
+  layoutState.textContent = text ?? `${n ? n + ' moved' : 'Nothing moved yet'} · ${where}${clash.length ? ` · overlapping: ${clash.slice(0, 2).join(', ')}${clash.length > 2 ? '…' : ''}` : ''}`;
+  layoutState.style.color = !text && clash.length ? 'var(--warm)' : '';
+}
+function move(node, dx, dz) { const { key } = node.userData.block; node.position.set(dx, 0, dz); if (dx || dz) OFF[key] = [dx, dz]; else delete OFF[key]; }
+function layoutChanged() {
+  applyOffsets(); writeInstances(); ring.visible = false; setFlow(currentFlow); frame(picked);
+  undoBtn.disabled = !moves.length; resetSelBtn.disabled = !picked || !OFF[picked.userData.block.key];
+  if (!canSave) { layoutNote(); return; }
+  layoutNote('Saving…'); clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      if (Object.keys(OFF).length) ALL_OFF[WH.id] = OFF; else delete ALL_OFF[WH.id];
+      const r = await fetch(`/api/warehouse-layout?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ warehouses: ALL_OFF }) });
+      if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+      layoutNote();
+    } catch (error) { layoutNote(`Not saved: ${error.message}`); }
+  }, 400);
+}
+function aim(e) { pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(pointer, camera); }
+function nodeAt(e) {
+  aim(e);
+  const slot = ray.intersectObjects(pickables, false)[0]; if (slot?.instanceId != null && slots[slot.instanceId].node) return slots[slot.instanceId].node;
+  for (const hit of ray.intersectObjects(Object.values(blockNodes), true)) { let o = hit.object; while (o && !o.userData.block) o = o.parent; if (o) return o; }
+  return null;
+}
+function floorPoint(e) { aim(e); return ray.ray.intersectPlane(floorPlane, new THREE.Vector3()); }
+// Capture phase on window: runs before the orbit controls, so a drag on a block moves it instead of the camera.
+addEventListener('pointerdown', (e) => {
+  if (!editing || e.button !== 0 || e.target !== renderer.domElement) return;
+  const node = nodeAt(e), p = node && floorPoint(e); if (!node || !p) return;
+  picked = node; frame(node); resetSelBtn.disabled = !OFF[node.userData.block.key]; layoutNote(`${node.userData.block.text} · drag to move`);
+  drag = { node, start: p, from: offsetOf(node), moved: false }; down = [e.clientX, e.clientY];
+  controls.enabled = false; document.body.classList.add('dragging'); e.stopPropagation();
+}, { capture: true });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const p = floorPoint(e); if (!p) return;
+  const snap = (v) => Math.round(v * 2) / 2;
+  let dx = snap(drag.from[0] + p.x - drag.start.x), dz = snap(drag.from[1] + p.z - drag.start.z);
+  // Keep the block on the warehouse floor (between the dock lane and the far wall).
+  const [x0, z0, x1, z1] = drag.node.userData.footprint;
+  dx = Math.min(Math.max(dx, 11 - x0), W + 1 - x1); dz = Math.min(Math.max(dz, minZ + 0.8 - z0), maxZ - 1 - z1);
+  if (!drag.moved && Math.hypot(dx - drag.from[0], dz - drag.from[1]) < 0.5) return;
+  drag.moved = true; move(drag.node, dx, dz); frame(drag.node);
+  layoutNote(`${drag.node.userData.block.text} · ${dx >= 0 ? '+' : ''}${dx} m, ${dz >= 0 ? '+' : ''}${dz} m`);
+}, { capture: true });
+addEventListener('pointerup', () => {
+  if (!drag) return;
+  const { node, from, moved } = drag; drag = null; controls.enabled = true; document.body.classList.remove('dragging');
+  if (moved) { moves.push({ node, from }); if (moves.length > 50) moves.shift(); layoutChanged(); }
+}, { capture: true });
+undoBtn.addEventListener('click', () => { const h = moves.pop(); if (!h) return; move(h.node, ...h.from); picked = h.node; layoutChanged(); });
+resetSelBtn.addEventListener('click', () => { if (!picked) return; moves.push({ node: picked, from: offsetOf(picked) }); move(picked, 0, 0); layoutChanged(); });
+document.getElementById('layoutResetAll').addEventListener('click', () => {
+  if (!Object.keys(OFF).length || !confirm(`Return warehouse ${WH.id} to the automatic layout?`)) return;
+  moves.length = 0; for (const node of Object.values(blockNodes)) move(node, 0, 0); layoutChanged();
+});
+layoutBtn.addEventListener('click', () => {
+  editing = !editing; layoutPanel.hidden = !editing; layoutBtn.classList.toggle('on', editing); document.body.classList.toggle('editing', editing);
+  if (!editing) { picked = null; frame(null); }
+  placeWorkPanel(); layoutNote();
+});
 // Keep the work list below the header, which wraps on narrow screens.
-const placeWorkPanel = () => { document.getElementById('workPanel').style.top = `${Math.round(document.getElementById('top').getBoundingClientRect().bottom + 10)}px`; };
+const placeWorkPanel = () => {
+  const top = Math.round(document.getElementById('top').getBoundingClientRect().bottom + 10), panel = document.getElementById('layoutPanel');
+  panel.style.top = `${top}px`;
+  document.getElementById('workPanel').style.top = `${panel.hidden ? top : Math.round(panel.getBoundingClientRect().bottom + 10)}px`;
+};
 function resize() { placeWorkPanel(); const w = innerWidth, h = innerHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); composer.setSize(w, h); labelRenderer.setSize(w, h); }
 addEventListener('resize', resize); resize(); setFlow(params.get('flow') ?? (WORK.length ? 'work' : 'structure'));
 document.getElementById('loading').remove();

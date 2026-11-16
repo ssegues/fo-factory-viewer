@@ -2,6 +2,12 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
+## 0.8.1 — 2026-11-16
+
+- **Manual warehouse layout.** A **Layout** button on the warehouse page moves whole rack aisles and floor areas, with all their locations. Dock locations stay along the dock wall. Undo, reset of the selected block or of the whole warehouse, and an overlap warning, as on the factory page.
+- Forklift trips and the replay of warehouse work follow the moved locations.
+- Saved per data set in `data/<set>/warehouse-layout.json`, per warehouse, as offsets from the automatic layout. The sample data set is never written.
+
 ## 0.8.0 — 2026-11-16
 
 - **Manual layout.** A **Layout** button on the factory page opens an editor: drag resources, resource groups or whole production units across the floor. Groups move with their resources and units with their groups. Moves snap to half a metre, stay on the site floor, and can be undone or reset.

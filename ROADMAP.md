@@ -19,6 +19,7 @@ What each coming version is meant to include. Scope can move between versions; w
 
 ## Done
 
+- Manual layout of the warehouse page: rack aisles and floor areas (0.8.1).
 - Manual layout: drag units, groups and resources; saved as a local layer (0.8.0).
 - README for a first-time reader, screenshots, licence and publication on GitHub (0.7.1).
 - Real warehouse work replayed on the warehouse page, with a refresh button (0.7.0).
