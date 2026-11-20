@@ -1,0 +1,12 @@
+{
+  "meta": { "source": "sample", "note": "Invented item names for the sample data set, in the shape tools/extract-items.mjs writes." },
+  "items": {
+    "D0002": { "name": "Speaker", "group": "Audio" },
+    "D0005": { "name": "MachinedBracket", "group": "Metal" },
+    "M0001": { "name": "WiringHarness", "group": "AudioRM" },
+    "M0002": { "name": "MidRangeSpeakerUnit", "group": "AudioRM" },
+    "M0003": { "name": "Crossover", "group": "AudioRM" },
+    "M0007": { "name": "SteelBlank", "group": "MetalRM" },
+    "P0001": { "name": "Carton", "group": "Packaging" }
+  }
+}

@@ -125,8 +125,9 @@
 <div id="hint" class="hud"></div>
 <div id="mapPanel" class="hud" hidden>
   <div class="k mono">Local layer · never written to the ERP</div>
-  <h2>Resource models</h2>
-  <p>The ERP does not say what a resource looks like. Most specific rule wins: resource › group › type › capability › default.</p>
+  <div class="seg mono" id="mapTabs"><button data-tab="res" class="on">Resources</button><button data-tab="mat">Materials</button></div>
+  <h2 id="mapTitle">Resource models</h2>
+  <p id="mapIntro">The ERP does not say what a resource looks like. Most specific rule wins: resource › group › type › capability › default.</p>
   <div id="mapRules"></div>
   <input id="mapFilter" class="mono" type="search" placeholder="Filter resources…" />
   <div id="mapList"></div>
@@ -184,6 +185,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { floorMesh, outline, bounds, contains, area, FloorEditor } from './floor.js';
+import { ICON_NAMES, iconResolver, iconDecal, setIcon } from './icons.js';
 
 // ---------------------------------------------------------------- data
 // The viewer never talks to the ERP. It reads a snapshot (the manufacturing model as extracted)
@@ -192,7 +194,12 @@ const requested = new URLSearchParams(location.search).get('data') ?? 'sample';
 const SHOW_EMPTY = new URLSearchParams(location.search).get('empty') === '1';
 const dataset = /^[\w/-]+$/.test(requested) && !requested.includes('..') ? requested : 'sample';
 async function loadJson(name) { const r = await fetch(`../data/${dataset}/${name}.json`); return r.ok ? r.json() : null; }
-const [SNAP, VISUALS, WAREHOUSES, LAYOUT] = await Promise.all([loadJson('snapshot'), loadJson('visuals'), loadJson('warehouses'), loadJson('layout')]);
+const [SNAP, VISUALS, WAREHOUSES, LAYOUT, ITEMS] = await Promise.all([loadJson('snapshot'), loadJson('visuals'), loadJson('warehouses'), loadJson('layout'), loadJson('items')]);
+// Product icons: item names come from items.json (tools/extract-items.mjs); rules for items and product groups from visuals.json.
+const ICONS = { byItem: { ...VISUALS?.icons?.byItem }, byGroup: { ...VISUALS?.icons?.byGroup } };
+const iconOf = iconResolver(ITEMS?.items, ICONS);
+const itemName = (id) => ITEMS?.items?.[id]?.name ?? null;
+const named = (id) => itemName(id) ? `${id} · ${itemName(id)}` : id;
 if (!SNAP) { document.getElementById('loading').textContent = `No snapshot found in data/${dataset}`; throw new Error('Snapshot missing'); }
 
 const isPerson = (r) => r.type === 'Personnel';
@@ -1213,11 +1220,16 @@ const MATERIAL = 0xc9a2ff;
 const chevronPlain = canvasTexture(128, 64, (g) => { g.clearRect(0, 0, 128, 64); g.strokeStyle = '#fff'; g.lineWidth = 8; g.lineCap = 'square'; for (const x of [22, 86]) { g.beginPath(); g.moveTo(x, 14); g.lineTo(x + 20, 32); g.lineTo(x, 50); g.stroke(); } });
 const matLaneMat = new THREE.MeshBasicMaterial({ map: chevronPlain, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(MATERIAL).multiplyScalar(1.7), toneMapped: false });
 const crateGeo = new RoundedBoxGeometry(0.62, 0.5, 0.62, 2, 0.05), crateMat = std(0x3a2a55, 0.5, 0.2, { emissive: MATERIAL, emissiveIntensity: 0.9 }), bandMat = glow(MATERIAL, 3.5);
-function materialCrate() {
+function materialCrate(item) {
   const g = new THREE.Group(); const body = new THREE.Mesh(crateGeo, crateMat); body.position.y = 0.42; body.castShadow = true; g.add(body);
   const band = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.08, 0.66), bandMat); band.position.y = 0.42; g.add(band);
-  const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), M.graphite); base.position.y = 0.1; g.add(base); return g;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), M.graphite); base.position.y = 0.1; g.add(base);
+  // The label of what the crate carries, on every face; a plain crate when no icon applies.
+  const decal = iconDecal(); decal.scale.set(0.635, 0.4, 0.635); decal.position.y = 0.45; g.add(decal);
+  g.userData.decal = decal; g.userData.item = item; setIcon(decal, item && iconOf(item).icon); return g;
 }
+function refreshIcons() { for (const layer of [routeStatic, ordersLayer]) layer.traverse((o) => { if (o.userData.decal) setIcon(o.userData.decal, o.userData.item && iconOf(o.userData.item).icon); }); }
+const iconicFirst = (ids) => ids.find((id) => iconOf(id).icon) ?? ids[0];
 function sourceOf(line, machineId) {
   const group = groupsById[machines[machineId]?.res.groupId]?.group;
   let wh = line.warehouseId, loc = line.locationId;
@@ -1233,12 +1245,12 @@ let matFlows = [];
 function buildMaterial(route, output) {
   matFlows = [];
   const legs = new Map(), tags = new Map();
-  const leg = (a, b) => { const k = a.key + '>' + b.key; if (!legs.has(k) && a.pos.distanceTo(b.pos) > 0.6) legs.set(k, curve(a.pos, b.pos)); };
+  const leg = (a, b, item) => { const k = a.key + '>' + b.key; if (!legs.has(k) && a.pos.distanceTo(b.pos) > 0.6) legs.set(k, { c: curve(a.pos, b.pos), items: new Set() }); if (item) legs.get(k)?.items.add(item); };
   for (const m of route.materials) {
     const op = route.ops.find((o) => o.no === m.op) ?? (m.op == null ? route.ops[0] : null); if (!op) continue;
     for (const id of op.alternatives.slice(0, 3)) {
       const src = sourceOf(m, id), gid = machines[id].res.groupId, bay = groupsById[gid]?.bays?.IN, dest = { key: id, pos: front(id).add(new THREE.Vector3(-1.5, 0, 0.9)) };
-      if (bay) { const mid = { key: 'in:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(src, mid); leg(mid, dest); } else leg(src, dest);
+      if (bay) { const mid = { key: 'in:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(src, mid, m.item); leg(mid, dest, m.item); } else leg(src, dest, m.item);
       const t = tags.get(src.key) ?? { src, items: new Set() }; t.items.add(m.item); tags.set(src.key, t);
     }
   }
@@ -1247,14 +1259,14 @@ function buildMaterial(route, output) {
   if (output && lastOp) {
     for (const id of lastOp.alternatives.slice(0, 3)) {
       const gid = machines[id].res.groupId, bay = groupsById[gid]?.bays?.OUT, from = { key: 'out:' + id, pos: front(id).add(new THREE.Vector3(1.5, 0, 0.9)) };
-      if (bay) { const mid = { key: 'outbay:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(from, mid); leg(mid, output); } else leg(from, output);
+      if (bay) { const mid = { key: 'outbay:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(from, mid, route.product); leg(mid, output, route.product); } else leg(from, output, route.product);
     }
     const t = label(`OUTPUT · ${route.product ?? ''}`, 'mat'); t.position.copy(output.pos).add(new THREE.Vector3(0, 6.4, 0)); t.userData.material = true; t.visible = showMaterial; routeStatic.add(t);
   }
-  for (const c of legs.values()) {
+  for (const { c, items } of legs.values()) {
     const lane = new THREE.Mesh(ribbon(c, 0.55), matLaneMat); lane.position.y = LEVEL + 0.02; lane.userData.material = true; lane.visible = showMaterial; routeStatic.add(lane);
-    const n = Math.max(1, Math.round(c.getLength() / 16));
-    for (let i = 0; i < n; i++) { const crate = materialCrate(); crate.userData.material = true; crate.visible = showMaterial; routeStatic.add(crate); matFlows.push({ crate, curve: c, phase: i / n, length: c.getLength() }); }
+    const n = Math.max(1, Math.round(c.getLength() / 16)), list = [...items];   // crates on a shared leg take turns with its items
+    for (let i = 0; i < n; i++) { const crate = materialCrate(list[i % list.length]); crate.userData.material = true; crate.visible = showMaterial; routeStatic.add(crate); matFlows.push({ crate, curve: c, phase: i / n, length: c.getLength() }); }
   }
   for (const { src, items } of tags.values()) {
     const list = [...items], t = label(`MATERIAL · ${list.slice(0, 3).join(' · ')}${list.length > 3 ? ` +${list.length - 3}` : ''}`, 'mat');
@@ -1364,16 +1376,16 @@ ORDERS.forEach((o, n) => {
   if (!o.jobs.length) { o.home = sourceOf(o.materials[0] ?? {}, null); return; }
   o.slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
   // Material for each job: a crate leaves the consumption location and reaches the resource as the job starts.
-  o.out = materialCrate(); o.out.visible = false; ordersLayer.add(o.out); pickables.push(o.out);
-  o.out.userData.info = { kind: 'Material', small: true, title: `Output of ${o.id}`, rows: [['Product', o.product ?? '—'], ['To', 'Finished goods'], ['Moved by', 'warehouse work, after the last operation']] };
+  o.out = materialCrate(o.product); o.out.visible = false; ordersLayer.add(o.out); pickables.push(o.out);
+  o.out.userData.info = { kind: 'Material', small: true, title: `Output of ${o.id}`, rows: [['Product', o.product ? named(o.product) : '—'], ['To', 'Finished goods'], ['Moved by', 'warehouse work, after the last operation']] };
   o.supplies = [];
   o.jobs.forEach((job, k) => {
     const bySource = {};
     for (const m of o.materials) { if (!(m.op === job[3] || (m.op == null && k === 0))) continue; const src = sourceOf(m, job[0]); (bySource[src.key] ??= { src, items: [] }).items.push(m); }
     Object.values(bySource).forEach(({ src, items }, i) => {
-      const mesh = materialCrate(); mesh.visible = false; ordersLayer.add(mesh);
+      const mesh = materialCrate(iconicFirst(items.map((m) => m.item))); mesh.visible = false; ordersLayer.add(mesh);
       mesh.userData.info = { kind: 'Material', small: true, title: `${items.length} component${items.length === 1 ? '' : 's'} for ${o.id}`, rows: [['From', src.text], ['To', `${job[0]} ${machines[job[0]].res.name}`],
-        ...items.slice(0, 6).map((m) => [m.item, m.qty == null ? '—' : String(m.qty)]), ['Source', o.materialsFrom]] };
+        ...items.slice(0, 6).map((m) => [named(m.item), m.qty == null ? '—' : String(m.qty)]), ['Source', o.materialsFrom]] };
       pickables.push(mesh);
       o.supplies.push({ mesh, at: job[1], src, to: job[0], i });
     });
@@ -1553,12 +1565,12 @@ function swapModel(id) {
 let saveTimer = null;
 function mappingChanged() {
   for (const id in machines) swapModel(id);
-  drawResources();
+  refreshIcons(); drawMap();
   if (!canSave) { mapState.textContent = 'Sample data: changes last until the page is reloaded.'; return; }
   mapState.textContent = 'Saving…'; clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try {
-      const r = await fetch(`/api/visuals?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ byResource: V.byResource, byGroup: V.byGroup, byType: V.byType, byCapability: V.byCapability, fallback: V.fallback }) });
+      const r = await fetch(`/api/visuals?data=${dataset}`, { method: 'PUT', headers: { 'X-FO-Viewer': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ byResource: V.byResource, byGroup: V.byGroup, byType: V.byType, byCapability: V.byCapability, fallback: V.fallback, icons: ICONS }) });
       if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
       mapState.textContent = `Saved to data/${dataset}/visuals.json`;
     } catch (error) { mapState.textContent = `Not saved: ${error.message}`; }
@@ -1604,9 +1616,46 @@ function drawResources() {
   }
   list.scrollTop = keep;
 }
-document.getElementById('mapFilter').addEventListener('input', drawResources);
+// Product icons: the Materials tab. Item › product group › name › plain box.
+let mapTab = 'res';
+const mapItems = () => [...new Set([...Object.keys(ITEMS?.items ?? {}), ...ROUTES.flatMap((r) => [r.product, ...r.materials.map((m) => m.item)]), ...ORDERS.flatMap((o) => [o.product, ...o.materials.map((m) => m.item)])].filter(Boolean))].sort();
+function iconSelect(current, emptyLabel, onChange) {
+  const sel = document.createElement('select'); sel.className = 'mono' + (current ? ' set' : ''); sel.add(new Option(emptyLabel, ''));
+  for (const [key, name] of Object.entries(ICON_NAMES)) sel.add(new Option(name, key));
+  sel.value = current ?? ''; sel.addEventListener('change', () => onChange(sel.value || null)); return sel;
+}
+const setIconRule = (table, key) => (value) => { if (value) table[key] = value; else delete table[key]; mappingChanged(); };
+function drawIconRules() {
+  const box = document.getElementById('mapRules'), keep = box.scrollTop; box.replaceChildren();
+  const h = document.createElement('h3'); h.textContent = 'By product group'; box.append(h);
+  const items = mapItems(), groups = [...new Set(items.map((id) => ITEMS?.items?.[id]?.group).filter(Boolean))].sort();
+  if (!groups.length) { const p = document.createElement('p'); p.textContent = 'No product groups read yet.'; box.append(p); }
+  for (const g of groups) { const n = items.filter((id) => ITEMS.items[id]?.group === g).length; box.append(row(g, `${n} item${n === 1 ? '' : 's'}`, iconSelect(ICONS.byGroup[g], '— by name —', setIconRule(ICONS.byGroup, g)))); }
+  box.scrollTop = keep;
+}
+function drawIconItems() {
+  const list = document.getElementById('mapList'), q = document.getElementById('mapFilter').value.trim().toLowerCase(), keep = list.scrollTop; list.replaceChildren();
+  const head = document.createElement('h3'); head.textContent = 'By item'; list.append(head);
+  for (const id of mapItems()) {
+    const item = ITEMS?.items?.[id]; if (q && !`${id} ${item?.name ?? ''} ${item?.group ?? ''}`.toLowerCase().includes(q)) continue;
+    const { icon, rule } = iconOf(id);
+    list.append(row(named(id), `${icon ? ICON_NAMES[icon] : 'Plain box'} · from ${rule}`, iconSelect(ICONS.byItem[id], '— follow rules —', setIconRule(ICONS.byItem, id))));
+  }
+  list.scrollTop = keep;
+}
+function drawMap() {
+  const res = mapTab === 'res';
+  for (const b of document.querySelectorAll('#mapTabs button')) b.classList.toggle('on', b.dataset.tab === mapTab);
+  document.getElementById('mapTitle').textContent = res ? 'Resource models' : 'Product icons';
+  document.getElementById('mapIntro').textContent = res ? 'The ERP does not say what a resource looks like. Most specific rule wins: resource › group › type › capability › default.'
+    : `Material crates show an icon chosen from the item name${ITEMS ? '' : ' (no item names read yet: Refresh orders reads them)'}. Most specific rule wins: item › product group › name › plain box.`;
+  document.getElementById('mapFilter').placeholder = res ? 'Filter resources…' : 'Filter items…';
+  if (res) { drawRules(); drawResources(); } else { drawIconRules(); drawIconItems(); }
+}
+document.getElementById('mapTabs').addEventListener('click', (e) => { const t = e.target.closest('button')?.dataset.tab; if (t && t !== mapTab) { mapTab = t; document.getElementById('mapFilter').value = ''; drawMap(); } });
+document.getElementById('mapFilter').addEventListener('input', () => (mapTab === 'res' ? drawResources() : drawIconItems()));
 mapBtn.addEventListener('click', () => { mapPanel.hidden = !mapPanel.hidden; mapBtn.classList.toggle('on', !mapPanel.hidden);
-  if (!mapPanel.hidden) { drawRules(); drawResources(); mapState.textContent = canSave ? `Changes are saved to data/${dataset}/visuals.json` : 'Sample data: changes last until the page is reloaded.'; } });
+  if (!mapPanel.hidden) { drawMap(); mapState.textContent = canSave ? `Changes are saved to data/${dataset}/visuals.json` : 'Sample data: changes last until the page is reloaded.'; } });
 
 const ring = new THREE.Mesh(new THREE.RingGeometry(3.7, 3.95, 4, 1), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x3dd6c6).multiplyScalar(2.5), side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI / 2; ring.rotation.z = Math.PI / 4; ring.visible = false; world.add(ring);

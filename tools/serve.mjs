@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { access, readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cleanIconRules } from '../viewer/icon-rules.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT ?? 4174);
@@ -51,7 +52,8 @@ function cleanVisuals(input) {
     return out;
   };
   if (!MODELS.has(input.fallback)) throw new Error('Unknown default model.');
-  return { note: 'Local presentation layer. Never written back to the ERP.', byResource: map(input.byResource), byGroup: map(input.byGroup), byType: map(input.byType), byCapability: map(input.byCapability), fallback: input.fallback };
+  return { note: 'Local presentation layer. Never written back to the ERP.', byResource: map(input.byResource), byGroup: map(input.byGroup), byType: map(input.byType), byCapability: map(input.byCapability), fallback: input.fallback,
+    icons: cleanIconRules(input.icons) };
 }
 /** The layout file is a local presentation layer too: where units, groups and resources were moved by hand.
  *  Values are offsets in metres from the automatic layout; anything not listed keeps its automatic place. */

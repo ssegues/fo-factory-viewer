@@ -5,6 +5,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { connect } from './fo-client.mjs';
+import { extractItems } from './extract-items.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i < 0 ? fallback : args.splice(i, 2)[1]; };
@@ -75,3 +76,7 @@ snapshot.meta.orders = { source: 'odata', environment: fo.environment, readAt: n
   orders: productionOrders.length, withJobs: productionOrders.filter((o) => o.jobs.length).length, otherSiteRowsIgnored: (jobs ?? []).filter((j) => !wanted.has(j.ProductionOrderNumber)).length };
 await writeFile(file, JSON.stringify(snapshot, null, 2));
 console.log(`Merged ${productionOrders.length} production orders into ${file} (${snapshot.meta.orders.withJobs} with scheduled jobs).`);
+
+// Item names for product icons, for the items this data set now refers to. A failure here keeps what was merged above.
+try { const r = await extractItems(fo, folder, company); console.log(`Item names: ${r.found} of ${r.referenced} in ${r.file}.`); }
+catch (error) { console.log(`Item names not refreshed: ${error.message}`); }

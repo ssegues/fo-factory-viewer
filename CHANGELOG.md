@@ -4,6 +4,12 @@ Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR ste
 
 ## Unreleased
 
+- **Product icons.** Material crates on the factory floor carry a label with an icon for what they hold: speaker, cable, electronics, magnet, coil, laser and optics, screen, foam and rubber, casing, metal part, packaging, liquid or kit. The icon is chosen from the item name (for example *WiringHarness* is a cable, *SpeakerDampingFoam* foam); an item with no matching word stays a plain crate. Order output crates show the product, and route crates take turns with the items of their leg.
+- On the warehouse page, the box in a location with a fixed item carries that item's icon, and the forklift's load shows the item of the line it is replaying. Other boxes stay plain: they are still decorative.
+- A **Materials** tab in the Models panel lists the items with the icon each one gets and why, and sets an icon per item or per product group. Most specific rule wins: item › product group › name › plain box. Saved in `visuals.json` with the resource models; both pages use it.
+- Item names and product groups come from released products (`ReleasedProductsV2`, GET only) into `data/<set>/items.json`, read by `tools/extract-items.mjs` and by every **Refresh orders** and **Refresh work**. Details panels show item names next to item numbers.
+- The pictograms are drawn on a canvas at run time (`viewer/icons.js`): no image files.
+
 - **Online demo** on GitHub Pages (https://ssegues.github.io/fo-factory-viewer/) with the sample data. A root `index.html` opens the viewer; `.nojekyll` makes GitHub serve the files as they are.
 
 - Routes and production order paths now start on the resource of the first operation instead of the raw material area. The violet material flow already shows where the components come from. Carts start in the first operation, and an order marker appears on its first resource once its material has arrived.

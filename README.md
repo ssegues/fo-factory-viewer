@@ -42,8 +42,8 @@ Everything real lives in `data/local/`, which git ignores. Nothing below writes 
    ```sh
    node tools/import-dmf.mjs <extracted-package-folder> data/local/my-site --site 1 --company USMF
    ```
-2. **Connection for live reads.** Register an application in Microsoft Entra ID, link it to a Dynamics 365 user under *System administration > Setup > Microsoft Entra applications*, and give that user roles with read access to the data entities you need (production orders, route jobs, BOM lines, warehouse work). Copy [`docs/connection.example.json`](docs/connection.example.json) to `data/local/connection.local.json` and fill it in. The client secret is not stored in that file: on Windows it is kept encrypted for your user with `Export-Clixml`, and `secretFile` points to it.
-3. **Orders.** Read production orders, operations, scheduled jobs and BOM lines (GET only):
+2. **Connection for live reads.** Register an application in Microsoft Entra ID, link it to a Dynamics 365 user under *System administration > Setup > Microsoft Entra applications*, and give that user roles with read access to the data entities you need (production orders, route jobs, BOM lines, warehouse work, released products). Copy [`docs/connection.example.json`](docs/connection.example.json) to `data/local/connection.local.json` and fill it in. The client secret is not stored in that file: on Windows it is kept encrypted for your user with `Export-Clixml`, and `secretFile` points to it.
+3. **Orders.** Read production orders, operations, scheduled jobs and BOM lines (GET only). The same run reads the names of the items involved from released products, for the product icons; `tools/extract-items.mjs` reads them on their own:
    ```sh
    node tools/extract-orders.mjs data/local/my-site
    ```
@@ -59,7 +59,7 @@ An access error (HTTP 403) on a data entity usually means the user's roles grant
 ## What is real and what is not
 
 - **From the ERP:** the hierarchy, resources and capabilities, which resources can perform each operation, routes, BOMs, production orders and their scheduled jobs, BOM line consumption locations, warehouse locations and zones, and warehouse work with its lines.
-- **Derived:** the floor layout (unless you move things by hand), the position inside a rack (read from the location ID), and which 3D model stands for each resource.
+- **Derived:** the floor layout (unless you move things by hand), the position inside a rack (read from the location ID), which 3D model stands for each resource, and the icon on a crate or box (from the item name).
 - **Viewer conventions:** speeds, how long a zero-length job is shown as busy, and the moment a material crate arrives (when the job starts).
 - **Decoration:** lamps, dust, the logistics lane with its trains and pedestrians, the boxes on warehouse shelves, and the flows marked *illustrative* on the warehouse page.
 
@@ -70,12 +70,14 @@ An access error (HTTP 403) on a data entity usually means the user's roles grant
 | `viewer/index.html` | Factory page (single file, no build step) |
 | `viewer/warehouse.html` | Warehouse page |
 | `viewer/floor.js` | Floor shapes and their editor, shared by both pages |
+| `viewer/icons.js`, `viewer/icon-rules.js` | Product icons and the rules that choose them, shared by both pages |
 | `viewer/models/` | glTF models of the CNC, robot and packaging cells |
 | `data/sample/` | Invented sample data in the snapshot format |
 | `data/local/` | Your real extracts and connection file; ignored by git |
 | `tools/serve.mjs` | Local server: static files, the refresh buttons, saving the model mapping and the layout |
 | `tools/import-dmf.mjs` | Snapshot from a Data management package |
 | `tools/extract-orders.mjs` | Orders, jobs and BOM lines over OData (GET only) |
+| `tools/extract-items.mjs` | Item names and product groups (`items.json`) over OData (GET only) |
 | `tools/import-warehouse.mjs` | `warehouses.json` from a warehouse Data management package |
 | `tools/import-warehouse-work.mjs`, `tools/extract-warehouse-work.mjs` | Warehouse work, from a package or over OData |
 | `tools/fo-client.mjs` | The read-only OData client: GET only, one environment, credentials never printed |

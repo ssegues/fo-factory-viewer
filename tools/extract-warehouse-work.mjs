@@ -6,6 +6,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { connect } from './fo-client.mjs';
 import { mergeWork, upperKeys } from './warehouse-work.mjs';
+import { extractItems } from './extract-items.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i < 0 ? fallback : args.splice(i, 2)[1]; };
@@ -31,3 +32,7 @@ const summary = mergeWork(data, headers.map(upperKeys), lines.map(upperKeys), { 
 await writeFile(file, JSON.stringify(data));
 console.log(`Merged ${summary.headers} work orders (${summary.lines} lines) into ${file}; ${summary.unplacedLines} line(s) without a known location.`);
 for (const [id, n] of Object.entries(summary.byWarehouse)) console.log(`  ${id.padEnd(8)} ${n} work order(s)`);
+
+// Item names for product icons, for the items this data set now refers to. A failure here keeps what was merged above.
+try { const r = await extractItems(fo, folder, company); console.log(`Item names: ${r.found} of ${r.referenced} in ${r.file}.`); }
+catch (error) { console.log(`Item names not refreshed: ${error.message}`); }
