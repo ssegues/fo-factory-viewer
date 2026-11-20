@@ -80,6 +80,7 @@
   #timeline { bottom:18px; left:50%; transform:translateX(-50%); padding:10px 16px; display:none; gap:12px; align-items:center; width:min(720px,calc(100vw - 32px)); }
   #timeline button { background:rgba(61,214,198,.16); color:var(--accent); border:1px solid var(--line); padding:6px 12px; font:inherit; font-size:12px; letter-spacing:1.2px; text-transform:uppercase; cursor:pointer; min-width:72px; }
   #timeline input { flex:1; accent-color:var(--accent); }
+  #speed { background:rgba(255,255,255,.04); color:var(--accent); border:1px solid var(--line); padding:5px 6px; font-size:12px; }
   #clock { font-size:15px; min-width:52px; white-space:nowrap; text-align:right; color:var(--accent); }
   #legend { bottom:18px; left:16px; padding:8px 14px; font-size:12px; color:var(--dim); display:flex; gap:14px; }
   #legend i { display:inline-block; width:8px; height:8px; margin-right:6px; box-shadow:0 0 8px currentColor; }
@@ -160,6 +161,9 @@
   <button id="play">Pause</button>
   <input id="scrub" type="range" min="0" max="480" step="any" value="0" />
   <span id="clock" class="mono">06:00</span>
+  <select id="speed" class="mono" aria-label="Playback speed" title="Playback speed">
+    <option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+  </select>
 </div>
 <div id="legend" class="hud mono">
   <span><i style="background:#3ddc84;color:#3ddc84"></i>RUNNING</span>
@@ -244,7 +248,9 @@ const DATED = rawOrders.some((o) => (o.jobs ?? []).some((j) => typeof j.start ==
 const stamps = rawOrders.flatMap((o) => (o.jobs ?? []).flatMap((j) => [j.start, j.end])).filter(Boolean);
 const T0 = DATED ? Math.min(...stamps.map((x) => Date.parse(x + 'Z'))) - 12 * 3.6e6 : 0;
 const clockOf = (x) => (DATED ? (Date.parse(x + 'Z') - T0) / 3.6e6 : x);          // hours for ERP data, minutes for the sample
-const TRAVEL = DATED ? 10 : 15, MIN_BUSY = DATED ? 8 : 0;
+// Travel and minimum visible busy time, in timeline units. A selected order uses values scaled to its own jobs.
+const BASE_TRAVEL = DATED ? 10 : 15, BASE_BUSY = DATED ? 8 : 0;
+let TRAVEL = BASE_TRAVEL, MIN_BUSY = BASE_BUSY;
 const productColour = {};
 const ORDERS = rawOrders.map((o) => {
   const jobs = (o.jobs ?? []).filter((j) => j.start != null && j.resourceId).map((j) => ({ primary: !j.priority || j.priority === 'Primary', row: [j.resourceId, clockOf(j.start), clockOf(j.end ?? j.start), j.operation ?? null] }));
@@ -1224,7 +1230,7 @@ function sourceOf(line, machineId) {
   return { key: 'raw', pos: START.pos, text: wh ? `${wh}${loc ? ' / ' + loc : ''} (not on this floor)` : 'no warehouse stated' };
 }
 let matFlows = [];
-function buildMaterial(route) {
+function buildMaterial(route, output) {
   matFlows = [];
   const legs = new Map(), tags = new Map();
   const leg = (a, b) => { const k = a.key + '>' + b.key; if (!legs.has(k) && a.pos.distanceTo(b.pos) > 0.6) legs.set(k, curve(a.pos, b.pos)); };
@@ -1235,6 +1241,15 @@ function buildMaterial(route) {
       if (bay) { const mid = { key: 'in:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(src, mid); leg(mid, dest); } else leg(src, dest);
       const t = tags.get(src.key) ?? { src, items: new Set() }; t.items.add(m.item); tags.set(src.key, t);
     }
+  }
+  // What the last operation produces leaves by warehouse work, not as an operation: same violet flow, towards the output location.
+  const lastOp = route.ops[route.ops.length - 1];
+  if (output && lastOp) {
+    for (const id of lastOp.alternatives.slice(0, 3)) {
+      const gid = machines[id].res.groupId, bay = groupsById[gid]?.bays?.OUT, from = { key: 'out:' + id, pos: front(id).add(new THREE.Vector3(1.5, 0, 0.9)) };
+      if (bay) { const mid = { key: 'outbay:' + gid, pos: bay.clone().add(new THREE.Vector3(0, 0, 1.3)) }; leg(from, mid); leg(mid, output); } else leg(from, output);
+    }
+    const t = label(`OUTPUT · ${route.product ?? ''}`, 'mat'); t.position.copy(output.pos).add(new THREE.Vector3(0, 6.4, 0)); t.userData.material = true; t.visible = showMaterial; routeStatic.add(t);
   }
   for (const c of legs.values()) {
     const lane = new THREE.Mesh(ribbon(c, 0.55), matLaneMat); lane.position.y = LEVEL + 0.02; lane.userData.material = true; lane.visible = showMaterial; routeStatic.add(lane);
@@ -1256,7 +1271,8 @@ function buildRoute(route) {
   ROUTE = route; curveCache = new Map(); clearRoute(); layers = [];
   if (!route) return;
   const end = (op, side) => { const at = groupsById[machines[op.alternatives[0]]?.res.groupId]?.group[side], key = at && `${at.warehouseId}/${at.locationId}`; return whBays[key] ? { key: 'wh:' + key, pos: whBays[key] } : null; };
-  const sequence = [[end(route.ops[0], 'input') ?? START], ...route.ops.map((op) => op.alternatives.map((id) => ({ key: id, pos: front(id), machine: id, op }))), [end(route.ops[route.ops.length - 1], 'output') ?? END]];
+  const sequence = route.ops.map((op) => op.alternatives.map((id) => ({ key: id, pos: front(id), machine: id, op })));
+  const output = end(route.ops[route.ops.length - 1], 'output') ?? END;
   layers.push(sequence[0]);
   for (let i = 1; i < sequence.length; i++) {
     const prev = sequence[i - 1], next = sequence[i];
@@ -1270,7 +1286,7 @@ function buildRoute(route) {
     const t = label(text, cls); t.position.copy(machines[id].pos).add(new THREE.Vector3(0, machines[id].height + 1.7, 0)); routeStatic.add(t); };
   for (const op of route.ops) for (const id of op.alternatives) tag(id, `OP ${op.no}`, 'op');
   for (const op of route.ops) for (const set of op.assistants) for (const id of set) tag(id, `OP ${op.no} +`, 'op assist');
-  buildMaterial(route);
+  buildMaterial(route, output);
 }
 // A route with many candidate resources would draw a lane for every pair. Those lanes appear only while a cart uses them.
 let lanes = new Map(), routeClock = 0;
@@ -1295,16 +1311,24 @@ function makeCart() {
   g.add(load); g.userData.load = load; g.scale.setScalar(1.45); return g;
 }
 const carts = []; let spawnClock = 3, spawnCount = 0;
+// At a resource the cart unloads and the resource (with its assistants) runs for the operation's dwell time.
+function arrive(p) {
+  const stop = p.stops[p.i]; if (!stop.machine) return;
+  p.phase = 'dwell'; p.t = 0; p.mesh.userData.load.visible = false; p.busy = [stop.machine];
+  for (const set of stop.op.assistants) { const id = set[p.n % set.length]; if (machines[id] && id !== stop.machine) p.busy.push(id); }
+  for (const id of p.busy) machines[id].active++;
+}
 function release(p) { for (const id of p.busy) machines[id].active--; p.busy = []; }
 function stepRoute(dt) {
   laneMat.map.offset.x -= dt * 1.1; routeClock += dt;
   for (const lane of lanes.values()) lane.mesh.visible = lane.until > routeClock;
-  if (layers.length < 3) return;
+  if (!layers.length) return;
   spawnClock += dt;
   if (spawnClock > 3.2) {
     spawnClock = 0; spawnCount++;
     const mesh = makeCart(); routeLayer.add(mesh);
-    carts.push({ mesh, n: spawnCount, stops: layers.map((l) => l[spawnCount % l.length]), i: 0, phase: 'move', t: 0, busy: [] });
+    const p = { mesh, n: spawnCount, stops: layers.map((l) => l[spawnCount % l.length]), i: 0, phase: 'move', t: 0, busy: [] };
+    carts.push(p); mesh.position.copy(p.stops[0].pos); arrive(p);
   }
   for (let k = carts.length - 1; k >= 0; k--) {
     const p = carts[k];
@@ -1314,16 +1338,10 @@ function stepRoute(dt) {
       const u = Math.min(1, p.t), tan = c.getTangentAt(Math.min(0.999, Math.max(0.001, u)));
       p.mesh.position.copy(c.getPointAt(u)); p.mesh.rotation.y = Math.atan2(-tan.z, tan.x);
       if (p.t >= 1) {
-        p.i++; p.t = 0;
-        if (p.i >= p.stops.length - 1) { routeLayer.remove(p.mesh); carts.splice(k, 1); continue; }
-        const stop = p.stops[p.i];
-        if (stop.machine) {
-          p.phase = 'dwell'; p.mesh.userData.load.visible = false; p.busy = [stop.machine];
-          for (const set of stop.op.assistants) { const id = set[p.n % set.length]; if (machines[id] && id !== stop.machine) p.busy.push(id); }
-          for (const id of p.busy) machines[id].active++;
-        }
+        p.i++; p.t = 0; arrive(p);
+        if (p.phase !== 'dwell' && p.i >= p.stops.length - 1) { routeLayer.remove(p.mesh); carts.splice(k, 1); continue; }
       }
-    } else { p.t += dt; if (p.t >= p.stops[p.i].op.dwell) { release(p); p.phase = 'move'; p.t = 0; p.mesh.userData.load.visible = true; } }
+    } else { p.t += dt; if (p.t >= p.stops[p.i].op.dwell) { release(p); if (p.i >= p.stops.length - 1) { routeLayer.remove(p.mesh); carts.splice(k, 1); continue; } p.phase = 'move'; p.t = 0; p.mesh.userData.load.visible = true; } }
   }
 }
 function clearRoute() { for (const p of carts) routeLayer.remove(p.mesh); carts.length = 0; spawnClock = 3; }
@@ -1346,6 +1364,8 @@ ORDERS.forEach((o, n) => {
   if (!o.jobs.length) { o.home = sourceOf(o.materials[0] ?? {}, null); return; }
   o.slot = new THREE.Vector3(3.8 + (n % 2) * 1.6, 0, ((n % 6) - 2.5) * 1.5);
   // Material for each job: a crate leaves the consumption location and reaches the resource as the job starts.
+  o.out = materialCrate(); o.out.visible = false; ordersLayer.add(o.out); pickables.push(o.out);
+  o.out.userData.info = { kind: 'Material', small: true, title: `Output of ${o.id}`, rows: [['Product', o.product ?? '—'], ['To', 'Finished goods'], ['Moved by', 'warehouse work, after the last operation']] };
   o.supplies = [];
   o.jobs.forEach((job, k) => {
     const bySource = {};
@@ -1363,7 +1383,7 @@ ORDERS.forEach((o, n) => {
 function orderPaths() {
   for (const o of ORDERS) {
     if (!o.jobs.length) continue;
-    const stops = [RAW.clone().add(o.slot), ...o.jobs.map((j) => front(j[0])), FIN.clone().add(new THREE.Vector3(-o.slot.x, 0, o.slot.z))];
+    const stops = [front(o.jobs[0][0]), ...o.jobs.map((j) => front(j[0])), FIN.clone().add(new THREE.Vector3(-o.slot.x, 0, o.slot.z))];   // the first leg has no length: orders start at their first resource
     o.curves = stops.slice(0, -1).map((s, i) => curve(s, stops[i + 1]));
     for (const s of o.supplies) s.curve = curve(s.src.pos, front(s.to).add(new THREE.Vector3(-1.4 + s.i * 0.9, 0, 0.9)));
   }
@@ -1374,16 +1394,17 @@ function placeOrders(t) {
   const waiting = {};
   for (const o of ORDERS) {
     const jobs = o.jobs, last = jobs.length - 1;
+    if (o.out) o.out.visible = false;
     if (focus && o !== focus) { o.mesh.visible = false; for (const s of o.supplies ?? []) s.mesh.visible = false; continue; }
     if (!jobs.length) { o.mesh.visible = o === focus; if (o.mesh.visible) o.mesh.position.copy(o.home.pos).add(new THREE.Vector3(1.2, 0, 1.6)); continue; }
     const busyUntil = (j) => Math.max(j[2], j[1] + MIN_BUSY), first = jobs[0][1], done = busyUntil(jobs[last]);
-    o.mesh.visible = t >= first - TRAVEL && t <= done + TRAVEL;
-    for (const s of o.supplies) { const u = (t - (s.at - TRAVEL)) / TRAVEL; s.mesh.visible = showMaterial && o.mesh.visible && u >= 0 && u <= 1.25; if (s.mesh.visible) s.mesh.position.copy(s.curve.getPoint(ease(Math.min(1, u)))); }
+    o.mesh.visible = t >= first && t <= done + TRAVEL;
+    for (const s of o.supplies) { const u = (t - (s.at - TRAVEL)) / TRAVEL; s.mesh.visible = showMaterial && t >= first - TRAVEL && t <= done + TRAVEL && u >= 0 && u <= 1.25; if (s.mesh.visible) s.mesh.position.copy(s.curve.getPoint(ease(Math.min(1, u)))); }
     o.progress = t < first ? 0 : last + 2;
     if (!o.mesh.visible) continue;
     let pos, u;
     if (t < first) { u = ease((t - (first - TRAVEL)) / TRAVEL); pos = o.curves[0].getPoint(u); o.progress = u; }
-    else if (t >= done) { u = ease((t - done) / TRAVEL); pos = o.curves[last + 1].getPoint(u); o.progress = last + 1 + u; }
+    else if (t >= done) { u = ease((t - done) / TRAVEL); o.progress = last + 1 + u; o.mesh.visible = false; o.out.visible = showMaterial; o.out.position.copy(o.curves[last + 1].getPoint(u)); continue; }
     else {
       let k = 0; while (k < last && jobs[k + 1][1] <= t) k++;
       const next = k < last ? jobs[k + 1][1] : Infinity;
@@ -1420,7 +1441,7 @@ const STATUS = [['StartedUp', 'Started'], ['Released', 'Released'], ['Scheduled'
 }
 // Path of the selected order, in its colour: faint where it still has to go, brighter where it has been.
 const focusPath = new THREE.Group(); ordersLayer.add(focusPath);
-const pathTex = chevron.clone(); pathTex.needsUpdate = true;
+const pathTex = chevronPlain.clone(); pathTex.needsUpdate = true;   // white chevrons, so the order's own colour shows
 let pathSegments = [];
 function buildFocusPath() {
   for (const c of [...focusPath.children]) { c.element?.remove(); c.geometry?.dispose(); c.material?.dispose?.(); focusPath.remove(c); }
@@ -1429,11 +1450,15 @@ function buildFocusPath() {
   const colour = new THREE.Color(focus.colour);
   const ahead = new THREE.MeshBasicMaterial({ map: pathTex, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide, color: colour.clone().multiplyScalar(1.3), toneMapped: false });
   const done = new THREE.MeshBasicMaterial({ map: pathTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, color: colour.clone().multiplyScalar(2.4), toneMapped: false });
-  for (const c of focus.curves) {
-    const back = new THREE.Mesh(ribbon(c, 0.7), ahead), front_ = new THREE.Mesh(ribbon(c, 0.7), done);
+  const outAhead = ahead.clone(), outDone = done.clone(); outAhead.color.set(MATERIAL).multiplyScalar(1.7); outAhead.opacity = 0.5; outDone.color.set(MATERIAL).multiplyScalar(2.2);
+  focus.curves.forEach((c, i) => {
+    if (c.getLength() < 0.1) { pathSegments.push(null); return; }      // the empty leg before the first resource
+    const out = i === focus.curves.length - 1;                          // output to finished goods: warehouse work, violet
+    const back = new THREE.Mesh(ribbon(c, 0.7), out ? outAhead : ahead), front_ = new THREE.Mesh(ribbon(c, 0.7), out ? outDone : done);
     back.position.y = LEVEL; front_.position.y = LEVEL + 0.004; focusPath.add(back, front_);
+    if (out) { back.visible = false; front_.userData.back = back; }     // the output flow appears only once the last operation has ended
     pathSegments.push(front_);
-  }
+  });
   // Each stop says which operation runs there.
   const seen = new Set();
   for (const j of focus.jobs) {
@@ -1445,7 +1470,7 @@ function buildFocusPath() {
 function stepFocusPath(dt) {
   if (!pathSegments.length) return;
   pathTex.offset.x -= dt * 0.6;
-  pathSegments.forEach((mesh, i) => { const f = Math.min(1, Math.max(0, (focus.progress ?? 0) - i)); mesh.visible = f > 0; mesh.geometry.setDrawRange(0, 6 * Math.round(f * 48)); });
+  pathSegments.forEach((mesh, i) => { if (!mesh) return; const f = Math.min(1, Math.max(0, (focus.progress ?? 0) - i)); if (mesh.userData.back) mesh.userData.back.visible = (focus.progress ?? 0) > i; mesh.visible = f > 0; mesh.geometry.setDrawRange(0, 6 * Math.round(f * 48)); });
 }
 const timeOf = (t) => DATED ? new Date(T0 + t * 3.6e6).toISOString().slice(0, 16).replace('T', ' ') : clockLabel(t);
 function showInfo(info) {
@@ -1465,9 +1490,12 @@ function focusOrder(id) {
   orderSel.value = focus?.id ?? '';
   const u = new URL(location.href); if (focus) u.searchParams.set('order', focus.id); else u.searchParams.delete('order'); history.replaceState(null, '', u);
   if (focus?.jobs.length) {
+    // Short orders: travel takes a fraction of the order's own duration, so its jobs fill the loop instead of hours of travel.
+    const length = Math.max(...focus.jobs.map((j) => j[2])) - focus.jobs[0][1];
+    TRAVEL = Math.min(BASE_TRAVEL, Math.max(length * 0.25, DATED ? 0.05 : 1)); MIN_BUSY = 0;
     const first = focus.jobs[0][1], done = Math.max(...focus.jobs.map((j) => Math.max(j[2], j[1] + MIN_BUSY)));
     span = [first - TRAVEL, done + TRAVEL]; minutes = span[0];
-  } else span = [0, DAY];
+  } else { span = [0, DAY]; TRAVEL = BASE_TRAVEL; MIN_BUSY = BASE_BUSY; }
   scrub.min = String(span[0]); scrub.max = String(span[1]); scrub.value = String(minutes);
   document.getElementById('timeline').style.visibility = focus && !focus.jobs.length ? 'hidden' : '';
   buildFocusPath();
@@ -1505,6 +1533,11 @@ document.querySelectorAll('#modes button').forEach((b) => b.addEventListener('cl
 document.getElementById('matBtn').addEventListener('click', (e) => { showMaterial = !showMaterial; e.currentTarget.classList.toggle('on', showMaterial); for (const c of routeStatic.children) if (c.userData.material) c.visible = showMaterial; });
 playBtn.addEventListener('click', () => { playing = !playing; playBtn.textContent = playing ? 'Pause' : 'Play'; });
 scrub.addEventListener('input', () => { minutes = Number(scrub.value); });
+// Playback speed of the orders replay. It only changes how fast the page plays the ERP schedule; remembered on this device.
+const speedSel = document.getElementById('speed'); let speed = 1;
+try { const saved = localStorage.getItem('fo-speed'); if (saved && [...speedSel.options].some((o) => o.value === saved)) speedSel.value = saved; } catch {}
+speed = Number(speedSel.value);
+speedSel.addEventListener('change', () => { speed = Number(speedSel.value); try { localStorage.setItem('fo-speed', speedSel.value); } catch {} });
 
 // ---------------------------------------------------------------- resource model mapping (local layer)
 const MODEL_NAMES = { cnc: 'CNC machining centre', robot: 'Robot cell', pack: 'Packaging line', press: 'Stamping press', inspect: 'Inspection cell', tank: 'Coating tank', paint: 'Paint booth', printer: '3D printer', bench: 'Manual workbench', vendor: 'Subcontractor', location: 'Floor location' };
@@ -1791,7 +1824,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(timer.getDelta(), 0.05); elapsed += dt;
   if (mode === 'route') { stepRoute(dt); stepMaterial(dt); }
   if (mode === 'orders') {
-    if (playing) { const len = span[1] - span[0]; minutes = span[0] + ((minutes - span[0] + dt * (focus ? len / 30 : DAY / (DATED ? 180 : 48))) % len + len) % len; scrub.value = String(minutes); }
+    if (playing) { const len = span[1] - span[0]; minutes = span[0] + ((minutes - span[0] + dt * speed * (focus ? len / 30 : DAY / (DATED ? 180 : 48))) % len + len) % len; scrub.value = String(minutes); }
     placeOrders(minutes); stepFocusPath(dt);
     for (const o of ORDERS) { o.gem.rotation.y = elapsed * 1.5; o.gem.position.y = 1.5 + Math.sin(elapsed * 2 + o.colour) * 0.12; }
     clock.textContent = clockLabel(minutes);

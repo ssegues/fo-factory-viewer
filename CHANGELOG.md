@@ -6,6 +6,11 @@ Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR ste
 
 - **Online demo** on GitHub Pages (https://ssegues.github.io/fo-factory-viewer/) with the sample data. A root `index.html` opens the viewer; `.nojekyll` makes GitHub serve the files as they are.
 
+- Routes and production order paths now start on the resource of the first operation instead of the raw material area. The violet material flow already shows where the components come from. Carts start in the first operation, and an order marker appears on its first resource once its material has arrived.
+- The output of the last operation is no longer an operation leg: it leaves as a violet warehouse flow, through the group's output bay, to the output location or finished goods, labelled **OUTPUT**. Route carts end at the last operation. In the Orders mode, a violet crate carries the order's output to finished goods after its last job; on a selected order's path the violet output leg appears only once the last operation has ended.
+- Fix: the selected order's path took a cyan tint from its chevron texture; it now shows the order's own colour.
+- **Playback speed** on the orders timeline (0.1× to 4×), remembered on this device.
+- A selected order's replay is scaled to its own jobs: travel takes a quarter of the order's duration (at most the usual travel) and the minimum busy time is dropped, so a 30-minute order fills the loop instead of hours of travel. With all orders shown, nothing changes.
 - **ERP connection panel** on the factory page: where the connection points (environment, URL, shortened tenant and client IDs), whether the encrypted secret is stored, and a **Test connection** button that makes one GET. The secret never reaches the page.
 - **Production order selector** in the Orders mode, grouped by status (Started, Released, Scheduled, …). Selecting an order shows only that order, loops the timeline over its jobs, brings its resources into view and fills the detail panel with quantities, route, jobs and parent order. Links can open an order directly with `?order=P000192`.
 - The selected order's path is drawn in its colour, from raw material through each resource to finished goods. The part still ahead is faint, the part already travelled is brighter, and each stop is tagged with its operation numbers.
