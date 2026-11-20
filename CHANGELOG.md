@@ -2,7 +2,7 @@
 
 Versions follow `MAJOR.MINOR.PATCH`. While the project is below 1.0, a MINOR step adds a capability and a PATCH step fixes or polishes one. The version lives in `package.json` and is shown in the viewer header.
 
-## Unreleased
+## 0.9.0 — 2026-11-20
 
 - **Product icons.** Material crates on the factory floor carry a label with an icon for what they hold: speaker, cable, electronics, magnet, coil, laser and optics, screen, foam and rubber, casing, metal part, packaging, liquid or kit. The icon is chosen from the item name (for example *WiringHarness* is a cable, *SpeakerDampingFoam* foam); an item with no matching word stays a plain crate. Order output crates show the product, and route crates take turns with the items of their leg.
 - On the warehouse page, the box in a location with a fixed item carries that item's icon, and the forklift's load shows the item of the line it is replaying. Other boxes stay plain: they are still decorative.

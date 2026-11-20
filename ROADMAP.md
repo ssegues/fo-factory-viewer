@@ -4,10 +4,10 @@ What each coming version is meant to include. Scope can move between versions; w
 
 ## 0.9 — Warehouse and factory connected
 
-- **0.9.0 — Real stock (on hold).** Real on-hand stock per location in place of the decorative box fill. No public OData entity gives stock per location outside project entities: `WarehousesOnHandV2` stops at the warehouse, and `InventoryOnHandForAI` at the inventory status. Inventory Visibility cannot be installed in a trial environment. The remaining candidate is the **Inventory on-hand report storage** report, exported with Data management and read locally from the package. The ERP connection panel of this version has shipped.
-- **0.9.1 — From warehouse to machine.** Link production pick work to its production order: open the order on the factory page from the warehouse page and back (the factory side, `?order=`, already exists), and show which work and location each material crate comes from.
-- **0.9.2 — The whole path, real or derived.** Pick location → group input location → resource → output location → finished goods. Solid where warehouse work says so, dashed where it is derived from BOM lines and group setup, with a legend. Warehouse names once the `Warehouses` entity is readable (still HTTP 403).
-- Production pick work for site 1 does not exist yet in USMF; it has to be created in the trial environment (by the user, in the ERP) to show 0.9.1 with real data.
+- **0.9.1 — Real stock (on hold).** Real on-hand stock per location in place of the decorative box fill. No public OData entity gives stock per location outside project entities: `WarehousesOnHandV2` stops at the warehouse, and `InventoryOnHandForAI` at the inventory status. Inventory Visibility cannot be installed in a trial environment. The remaining candidate is the **Inventory on-hand report storage** report, exported with Data management and read locally from the package. The ERP connection panel planned with it shipped in 0.9.0.
+- **0.9.2 — From warehouse to machine.** Link production pick work to its production order: open the order on the factory page from the warehouse page and back (the factory side, `?order=`, already exists), and show which work and location each material crate comes from.
+- **0.9.3 — The whole path, real or derived.** Pick location → group input location → resource → output location → finished goods. Solid where warehouse work says so, dashed where it is derived from BOM lines and group setup, with a legend. Warehouse names once the `Warehouses` entity is readable (still HTTP 403).
+- Production pick work for site 1 does not exist yet in USMF; it has to be created in the trial environment (by the user, in the ERP) to show 0.9.2 with real data.
 
 ## 1.0 — Stable release
 
@@ -18,11 +18,11 @@ What each coming version is meant to include. Scope can move between versions; w
 
 ## Done
 
-- Product icons on material crates, fixed-item boxes and forklift loads, chosen from item names read from released products; editable per item and product group (0.9.3).
-- Online demo on GitHub Pages with the sample data.
-- Production order selector: one order at a time, its path (faint ahead, bright behind), playback speed, replay scaled to its jobs, and an explanation for orders without jobs.
-- Routes start at the first operation; the output of the last operation is a violet warehouse flow.
-- ERP connection panel with a one-GET connection test.
+- Product icons on material crates, fixed-item boxes and forklift loads, chosen from item names read from released products; editable per item and product group (0.9.0).
+- Online demo on GitHub Pages with the sample data (0.9.0).
+- Production order selector: one order at a time, its path (faint ahead, bright behind), playback speed, replay scaled to its jobs, and an explanation for orders without jobs (0.9.0).
+- Routes start at the first operation; the output of the last operation is a violet warehouse flow (0.9.0).
+- ERP connection panel with a one-GET connection test (0.9.0).
 - Movable raw material, finished goods and production warehouse areas (0.8.3).
 - Floor size and shape on both pages: sections, resize, L/T/U shapes (0.8.2).
 - Manual layout of the warehouse page: rack aisles and floor areas (0.8.1).
